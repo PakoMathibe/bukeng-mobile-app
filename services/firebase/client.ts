@@ -1,14 +1,7 @@
 // services/firebase/client.ts
-import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import {
-  getFirestore,
-  Firestore,
-  initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
-} from 'firebase/firestore';
-import { getStorage, FirebaseStorage } from 'firebase/storage';
-import { getAuth, Auth } from 'firebase/auth';
+import { initializeApp, getApps } from 'firebase/app';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { getFirestore, enableIndexedDbPersistence, collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -19,39 +12,28 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-let app: FirebaseApp;
-let db: Firestore;
-let storage: FirebaseStorage;
-let auth: Auth;
-
-if (!getApps().length) {
-  app = initializeApp(firebaseConfig);
-
-  // Initialize Firestore with offline persistence
-  db = initializeFirestore(app, {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-    }),
-  });
-
-  storage = getStorage(app);
-  auth = getAuth(app);
-} else {
-  app = getApps()[0];
-  db = getFirestore(app);
-  storage = getStorage(app);
-  auth = getAuth(app);
+if (!firebaseConfig.apiKey) {
+  throw new Error('Missing Firebase environment variables');
 }
 
-export { app, db, storage, auth };
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
+export const storage = getStorage(app);
+export const db = getFirestore(app);
 
-// Offline status monitoring
-export function isFirestoreOnline(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const dbInstance = db;
-    // @ts-ignore - Firestore internal property
-    const isOnline =
-      dbInstance._settings?.experimentalAutoDetectLongPolling !== false;
-    resolve(isOnline);
+// Enable offline persistence
+if (typeof window !== 'undefined') {
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === 'failed-precondition') {
+      console.warn('Multiple tabs open, persistence can only be enabled in one tab at a time.');
+    } else if (err.code === 'unimplemented') {
+      console.warn('Browser doesn\'t support persistence');
+    }
   });
+}
+
+export async function uploadFile(file: File, path: string): Promise<string> {
+  const storageRef = ref(storage, path);
+  const snapshot = await uploadBytesResumable(storageRef, file);
+  const url = await getDownloadURL(snapshot.ref);
+  return url;
 }

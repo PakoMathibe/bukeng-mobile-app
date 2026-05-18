@@ -31,14 +31,20 @@ export interface GeoLocation {
 }
 
 export interface OperatingHours {
-  monday: { open: string; close: string; isOpen: boolean };
-  tuesday: { open: string; close: string; isOpen: boolean };
-  wednesday: { open: string; close: string; isOpen: boolean };
-  thursday: { open: string; close: string; isOpen: boolean };
-  friday: { open: string; close: string; isOpen: boolean };
-  saturday: { open: string; close: string; isOpen: boolean };
-  sunday: { open: string; close: string; isOpen: boolean };
-  publicHolidays: { open: string; close: string; isOpen: boolean };
+  monday: DayHours;
+  tuesday: DayHours;
+  wednesday: DayHours;
+  thursday: DayHours;
+  friday: DayHours;
+  saturday: DayHours;
+  sunday: DayHours;
+  publicHolidays: DayHours;
+}
+
+export interface DayHours {
+  open: string;
+  close: string;
+  isOpen: boolean;
 }
 
 export interface MerchantRating {
@@ -53,11 +59,9 @@ export interface MerchantRating {
   reported: boolean;
 }
 
-export interface MerchantCategory {
-  id: string;
-  name: string;
-  slug: string;
-  icon: string;
-  parentId: string | null;
-  merchantCount: number;
+export interface NearbyMerchantResponse {
+  merchants: Merchant[];
+  total: number;
+  location: GeoLocation;
+  radius: number;
 }

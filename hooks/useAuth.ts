@@ -18,16 +18,15 @@ export function useAuth() {
       setUser(result.user);
       setToken(result.token);
       document.cookie = `bukeng_token=${result.token}; path=/`;
-      localStorage.setItem('auth_token', result.token);
       toast.success('Welcome back!');
-      return result;
+      router.push('/dashboard');
     } catch (error: any) {
       toast.error(error.message || 'Login failed');
       throw error;
     } finally {
       setLoading(false);
     }
-  }, [setUser, setToken, setLoading]);
+  }, [setUser, setToken, setLoading, router]);
 
   const register = useCallback(async (data: any) => {
     setLoading(true);
@@ -36,24 +35,23 @@ export function useAuth() {
       setUser(result.user);
       setToken(result.token);
       document.cookie = `bukeng_token=${result.token}; path=/`;
-      localStorage.setItem('auth_token', result.token);
-      toast.success('Account created! Please complete verification.');
-      return result;
+      toast.success('Account created! Please verify your email.');
+      router.push('/dashboard');
     } catch (error: any) {
       toast.error(error.message || 'Registration failed');
       throw error;
     } finally {
       setLoading(false);
     }
-  }, [setUser, setToken, setLoading]);
+  }, [setUser, setToken, setLoading, router]);
 
-  return {
-    user,
-    token,
-    isLoading,
-    isAuthenticated: !!user,
-    login,
-    register,
-    logout,
-  };
+  const signOut = useCallback(async () => {
+    await AuthService.logout();
+    logout();
+    document.cookie = 'bukeng_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT';
+    toast.success('Logged out');
+    router.push('/');
+  }, [logout, router]);
+
+  return { user, token, isLoading, isAuthenticated: !!user, login, register, logout: signOut };
 }
