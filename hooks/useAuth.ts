@@ -1,83 +1,49 @@
 // hooks/useAuth.ts
+'use client';
+
 import { useAuthStore } from '@/store/authStore';
-import { apiClient } from '@/lib/apiClient';
+import { AuthService } from '@/domains/auth/authService';
 import { useRouter } from 'next/navigation';
 import { useCallback } from 'react';
 import { toast } from 'sonner';
 
 export function useAuth() {
-  const { user, token, isLoading, setUser, setToken, setLoading, logout } =
-    useAuthStore();
+  const { user, token, isLoading, setUser, setToken, setLoading, logout } = useAuthStore();
   const router = useRouter();
 
-  const login = useCallback(
-    async (email: string, password: string) => {
-      setLoading(true);
-      try {
-        const response = await apiClient.post<{
-          user: typeof user;
-          token: string;
-        }>('/auth/login', {
-          email,
-          password,
-        });
-        setUser(response.user);
-        setToken(response.token);
-        toast.success('Welcome back!');
-        router.push('/dashboard');
-        return response;
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Login failed');
-        throw error;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [setUser, setToken, setLoading, router]
-  );
-
-  const register = useCallback(
-    async (data: {
-      fullName: string;
-      email: string;
-      phoneNumber: string;
-      idNumber: string;
-      password: string;
-    }) => {
-      setLoading(true);
-      try {
-        const response = await apiClient.post<{
-          user: typeof user;
-          token: string;
-        }>('/auth/register', data);
-        setUser(response.user);
-        setToken(response.token);
-        toast.success('Account created! Please complete verification.');
-        router.push('/onboarding/start');
-        return response;
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : 'Registration failed'
-        );
-        throw error;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [setUser, setToken, setLoading, router]
-  );
-
-  const logoutUser = useCallback(async () => {
+  const login = useCallback(async (email: string, password: string) => {
+    setLoading(true);
     try {
-      await apiClient.post('/auth/logout', {});
-    } catch (error) {
-      console.error('Logout error:', error);
+      const result = await AuthService.login({ email, password });
+      setUser(result.user);
+      setToken(result.token);
+      document.cookie = `bukeng_token=${result.token}; path=/`;
+      toast.success('Welcome back!');
+      return result;
+    } catch (error: any) {
+      toast.error(error.message || 'Login failed');
+      throw error;
     } finally {
-      logout();
-      router.push('/login');
-      toast.success('Logged out successfully');
+      setLoading(false);
     }
-  }, [logout, router]);
+  }, [setUser, setToken, setLoading]);
+
+  const register = useCallback(async (data: any) => {
+    setLoading(true);
+    try {
+      const result = await AuthService.register(data);
+      setUser(result.user);
+      setToken(result.token);
+      document.cookie = `bukeng_token=${result.token}; path=/`;
+      toast.success('Account created!');
+      return result;
+    } catch (error: any) {
+      toast.error(error.message || 'Registration failed');
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  }, [setUser, setToken, setLoading]);
 
   return {
     user,
@@ -86,6 +52,6 @@ export function useAuth() {
     isAuthenticated: !!user,
     login,
     register,
-    logout: logoutUser,
+    logout,
   };
 }

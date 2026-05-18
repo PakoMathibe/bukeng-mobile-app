@@ -1,62 +1,35 @@
-// app/(auth)/login/page.tsx
+// app/login/page.tsx
 'use client';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useAuthStore } from '@/store/authStore';
 import { Eye, EyeOff } from 'lucide-react';
-import { toast } from 'sonner';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { setUser, setToken, setLoading } = useAuthStore();
+  const { login, isLoading } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setLoading(true);
-
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    // Create mock user
-    const mockUser = {
-      id: '1',
-      email: email,
-      fullName: email.split('@')[0],
-      idNumber: '9001011234567',
-      phoneNumber: '0712345678',
-      tier: 1 as const,
-      isVerified: true,
-      isActive: true,
-      creditLimit: 1000,
-      availableCredit: 1000,
-      kycStatus: 'verified' as const,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const mockToken = 'mock_jwt_token_' + Date.now();
-
-    setUser(mockUser);
-    setToken(mockToken);
-    document.cookie = `bukeng_token=${mockToken}; path=/`;
-
-    toast.success('Welcome back!');
-    router.push('/dashboard');
-
-    setIsLoading(false);
-    setLoading(false);
+    setError('');
+    
+    try {
+      await login(email, password);
+      router.push('/dashboard');
+    } catch (err: any) {
+      setError(err.message || 'Login failed');
+    }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4">
-      <div className="max-w-md w-full card">
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-lg p-8">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-teal-600 mb-2">Bukeng</h1>
           <p className="text-gray-600">Welcome back</p>
@@ -71,7 +44,7 @@ export default function LoginPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="input-field"
+              className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
               placeholder="demo@bukeng.co.za"
               required
             />
@@ -86,7 +59,7 @@ export default function LoginPage() {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="input-field pr-12"
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 pr-12"
                 placeholder="••••••••"
                 required
               />
@@ -100,9 +73,15 @@ export default function LoginPage() {
             </div>
           </div>
 
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+              <p className="text-red-600 text-sm">{error}</p>
+            </div>
+          )}
+
           <button
             type="submit"
-            className="btn-primary w-full"
+            className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-6 rounded-xl transition-all"
             disabled={isLoading}
           >
             {isLoading ? 'Signing in...' : 'Sign In'}
@@ -111,10 +90,7 @@ export default function LoginPage() {
 
         <p className="text-center text-gray-600 mt-6">
           Don't have an account?{' '}
-          <Link
-            href="/register"
-            className="text-teal-600 font-semibold hover:underline"
-          >
+          <Link href="/register" className="text-teal-600 font-semibold hover:underline">
             Sign Up
           </Link>
         </p>
