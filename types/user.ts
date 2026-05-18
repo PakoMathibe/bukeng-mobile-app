@@ -1,18 +1,28 @@
 // types/user.ts
-export type UserTier = 0 | 1 | 2 | 3;
+export type UserStatus = 'active' | 'suspended';
 
 export interface User {
   id: string;
-  email: string;
-  fullName: string;
-  idNumber: string;
-  phoneNumber: string;
-  tier: UserTier;
-  kycStatus: 'pending' | 'verified' | 'rejected';
-  accountStatus: 'active' | 'suspended';
-  creditLimit: number;
-  availableCredit: number;
+  email: string | null;
+  phoneNumber: string | null;
+  fullName: string | null;
+  idNumber: string | null;
+  dateOfBirth: string | null;
+  status: UserStatus;
   createdAt: Date;
   updatedAt: Date;
-  lastLoginAt: Date | null;
+}
+
+export interface CreditProfile {
+  id: string;
+  userId: string;
+  creditScore: number | null;
+  creditLimit: number | null;
+  availableCredit: number | null;
+  riskLevel: string | null;
+  updatedAt: Date;
+}
+
+export interface UserWithCredit extends User {
+  creditProfile: CreditProfile | null;
 }

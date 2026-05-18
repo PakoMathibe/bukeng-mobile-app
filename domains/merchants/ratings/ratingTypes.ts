@@ -1,4 +1,6 @@
 // domains/merchants/ratings/ratingTypes.ts
+import { MerchantRating } from '@/types/merchant';
+
 export interface RatingStats {
   average: number;
   total: number;

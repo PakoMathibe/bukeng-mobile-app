@@ -1,7 +1,19 @@
 // types/repayment.ts
+
+export interface RepaymentInstalment {
+  id: string;                    // maps to repayments.id
+  installmentPlanId: string;     // maps to installment_plan_id
+  amountDue: number;             // maps to amount_due
+  amountPaid: number;            // maps to amount_paid
+  dueDate: Date;                 // maps to due_date
+  paidAt: Date | null;           // maps to paid_at (add to DB if not exists)
+  status: 'pending' | 'paid' | 'late' | 'written_off';
+  lateFee: number;               // calculated field - NOT in DB
+}
+
 export interface RepaymentSchedule {
-  orderId: string;
-  merchantName: string;
+  orderId: string;               // maps to transaction_id
+  merchantName: string;          // from JOIN with merchants table
   totalAmount: number;
   totalPaid: number;
   remainingAmount: number;
@@ -13,30 +25,14 @@ export interface RepaymentSchedule {
   overdueDays: number;
 }
 
-export interface RepaymentInstalment {
-  id: string;
-  orderId: string;
-  amount: number;
-  dueDate: Date;
-  paidAt: Date | null;
-  status: 'pending' | 'paid' | 'late' | 'written_off';
-  lateFee: number;
-  lateFeePaid: boolean;
-  paymentId: string | null;
-  reminderCount: number;
-  lastReminderSent: Date | null;
-}
-
-export interface RepaymentPlan {
-  id: string;
-  userId: string;
-  orderId: string;
-  totalAmount: number;
-  instalmentCount: number;
-  instalmentAmount: number;
-  startDate: Date;
-  endDate: Date;
+export interface InstallmentPlan {
+  id: string;                    // maps to installment_plans.id
+  transactionId: string;         // maps to transaction_id
+  numberOfInstallments: number;  // maps to number_of_installments
+  installmentAmount: number;     // maps to installment_amount
+  startDate: Date;               // maps to start_date
+  endDate: Date;                 // maps to end_date
   status: 'active' | 'completed' | 'defaulted';
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date;               // maps to created_at
+  updatedAt: Date;               // maps to updated_at
 }

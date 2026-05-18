@@ -274,6 +274,12 @@ export class FraudService {
     userId: string,
     fingerprint: DeviceFingerprint
   ): Promise<void> {
+    // Guard: Only run in browser environment
+    if (typeof window === 'undefined') {
+      logger.debug('Skipping device fingerprint recording on server');
+      return;
+    }
+
     try {
       const key = `device_${userId}`;
       localStorage.setItem(
@@ -293,6 +299,12 @@ export class FraudService {
   static async getUserDeviceFingerprint(
     userId: string
   ): Promise<DeviceFingerprint | undefined> {
+    // Guard: Only run in browser environment
+    if (typeof window === 'undefined') {
+      logger.debug('Skipping device fingerprint retrieval on server');
+      return undefined;
+    }
+
     try {
       const key = `device_${userId}`;
       const stored = localStorage.getItem(key);
@@ -350,9 +362,17 @@ export class FraudService {
     return record.count > 10;
   }
 
-  static async getClientIp(): Promise<string> {
+  static async getClientIp(request?: Request): Promise<string> {
     // In production, get from request headers
-    return '127.0.0.1';
+    if (request) {
+      const headers = request.headers;
+      const forwarded = headers.get('x-forwarded-for');
+      if (forwarded) {
+        return forwarded.split(',')[0];
+      }
+      return headers.get('x-real-ip') || 'unknown';
+    }
+    return 'unknown';
   }
 
   static async getTransactionRiskStatus(

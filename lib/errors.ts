@@ -1,4 +1,6 @@
 // lib/errors.ts
+// Error classes only - helper functions are in errorHandler.ts
+
 export class AppError extends Error {
   public readonly code: string;
   public readonly statusCode: number;
@@ -10,6 +12,7 @@ export class AppError extends Error {
     this.code = code;
     this.statusCode = statusCode;
     this.details = details;
+    Error.captureStackTrace(this, this.constructor);
   }
 }
 
@@ -53,66 +56,4 @@ export class RateLimitError extends AppError {
     super(message, 'RATE_LIMIT_ERROR', 429);
     this.name = 'RateLimitError';
   }
-}
-
-export function handleError(error: unknown): { message: string; code: string; statusCode: number } {
-  if (error && typeof error === 'object' && 'code' in error && error.code === 'VALIDATION_ERROR') {
-    return {
-      message: (error as any).message || 'Validation failed',
-      code: 'VALIDATION_ERROR',
-      statusCode: 400,
-    };
-  }
-  
-  if (error && typeof error === 'object' && 'code' in error && error.code === 'AUTHENTICATION_ERROR') {
-    return {
-      message: (error as any).message || 'Authentication failed',
-      code: 'AUTHENTICATION_ERROR',
-      statusCode: 401,
-    };
-  }
-  
-  if (error && typeof error === 'object' && 'code' in error && error.code === 'CONFLICT_ERROR') {
-    return {
-      message: (error as any).message || 'Conflict occurred',
-      code: 'CONFLICT_ERROR',
-      statusCode: 409,
-    };
-  }
-
-  if (error instanceof AppError) {
-    return {
-      message: error.message,
-      code: error.code,
-      statusCode: error.statusCode,
-    };
-  }
-
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-      code: 'INTERNAL_ERROR',
-      statusCode: 500,
-    };
-  }
-
-  return {
-    message: 'An unknown error occurred',
-    code: 'UNKNOWN_ERROR',
-    statusCode: 500,
-  };
-}
-
-export function createErrorResponse(error: unknown): Response {
-  const { message, code, statusCode } = handleError(error);
-  return new Response(
-    JSON.stringify({
-      success: false,
-      error: { message, code },
-    }),
-    {
-      status: statusCode,
-      headers: { 'Content-Type': 'application/json' },
-    }
-  );
 }

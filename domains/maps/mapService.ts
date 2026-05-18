@@ -37,59 +37,44 @@ export interface RouteStep {
   maneuver: 'turn-left' | 'turn-right' | 'straight' | 'destination';
 }
 
-// Mock merchant locations database
-const mockMerchantLocations: Map<string, GeoLocation> = new Map([
-  [
-    '1',
-    {
-      lat: -26.145,
-      lng: 28.045,
-      formattedAddress: '33 Killarney Mall, Johannesburg',
-      placeId: 'place_1',
-    },
-  ],
-  [
-    '2',
-    {
-      lat: -26.14,
-      lng: 28.045,
-      formattedAddress: 'The Zone, Rosebank, Johannesburg',
-      placeId: 'place_2',
-    },
-  ],
-  [
-    '3',
-    {
-      lat: -26.107,
-      lng: 28.054,
-      formattedAddress: 'Sandton City, Sandton',
-      placeId: 'place_3',
-    },
-  ],
-  [
-    '4',
-    {
-      lat: -26.115,
-      lng: 28.048,
-      formattedAddress: 'Hyde Park Corner, Hyde Park',
-      placeId: 'place_4',
-    },
-  ],
-]);
+export interface GeocodingResult {
+  location: GeoLocation;
+  confidence: number;
+  source: 'google' | 'mapbox' | 'osm';
+}
 
 export class MapService {
   private static googleMapsApiKey: string | null = null;
   private static mapboxToken: string | null = null;
   private static activeProvider: 'google' | 'mapbox' = 'google';
+  private static isInitialized = false;
 
   static initialize(googleApiKey?: string, mapboxToken?: string): void {
     if (googleApiKey) {
       this.googleMapsApiKey = googleApiKey;
-    }
-    if (mapboxToken) {
+      this.activeProvider = 'google';
+    } else if (mapboxToken) {
       this.mapboxToken = mapboxToken;
+      this.activeProvider = 'mapbox';
+    } else {
+      throw new Error('Map service requires either Google Maps API key or Mapbox token');
     }
+    this.isInitialized = true;
     logger.info('Map service initialized', { provider: this.activeProvider });
+  }
+
+  private static async fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
   }
 
   static async getNearbyMerchants(
@@ -98,15 +83,9 @@ export class MapService {
     bounds?: MapBounds
   ): Promise<MapSearchResult> {
     try {
-      const { MerchantService } = await import(
-        '@/domains/merchants/merchantService'
-      );
-      let merchants = await MerchantService.getNearbyMerchants(
-        location,
-        radius
-      );
+      const { MerchantService } = await import('@/domains/merchants/merchantService');
+      let merchants = await MerchantService.getNearbyMerchants(location, radius);
 
-      // Filter by bounds if provided
       if (bounds) {
         merchants = merchants.filter((m) => {
           const lat = m.location.lat;
@@ -120,7 +99,6 @@ export class MapService {
         });
       }
 
-      // Calculate bounds that encompass all merchants
       let calculatedBounds: MapBounds;
       if (merchants.length > 0) {
         calculatedBounds = {
@@ -130,7 +108,6 @@ export class MapService {
           west: Math.min(...merchants.map((m) => m.location.lng)),
         };
       } else {
-        // Default bounds around user location
         calculatedBounds = {
           north: location.lat + 0.05,
           south: location.lat - 0.05,
@@ -151,26 +128,112 @@ export class MapService {
     }
   }
 
-  static async searchLocation(query: string): Promise<GeoLocation[]> {
+  static async searchLocation(query: string): Promise<GeocodingResult[]> {
+    if (!this.isInitialized) {
+      throw new Error('Map service not initialized. Call initialize() first.');
+    }
+
     try {
-      // In production, call Google Maps Geocoding API or Mapbox Geocoding
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // Mock results
-      const results: GeoLocation[] = [
-        {
-          lat: -26.14,
-          lng: 28.04,
-          formattedAddress: `${query}, Johannesburg, South Africa`,
-          placeId: `place_${Date.now()}`,
-        },
-      ];
-
-      return results;
+      if (this.activeProvider === 'google' && this.googleMapsApiKey) {
+        return await this.searchLocationGoogle(query);
+      } else if (this.activeProvider === 'mapbox' && this.mapboxToken) {
+        return await this.searchLocationMapbox(query);
+      }
+      return [];
     } catch (error) {
       logger.error('Failed to search location', error);
-      throw error;
+      return [];
     }
+  }
+
+  private static async searchLocationGoogle(query: string): Promise<GeocodingResult[]> {
+    const encodedQuery = encodeURIComponent(query);
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedQuery}&key=${this.googleMapsApiKey}&region=za&components=country:ZA`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (data.status !== 'OK' || !data.results) {
+      return [];
+    }
+
+    return data.results.map((result: any) => ({
+      location: {
+        lat: result.geometry.location.lat,
+        lng: result.geometry.location.lng,
+        formattedAddress: result.formatted_address,
+        placeId: result.place_id,
+      },
+      confidence: result.geometry.location_type === 'ROOFTOP' ? 1.0 : 0.7,
+      source: 'google',
+    }));
+  }
+
+  private static async searchLocationMapbox(query: string): Promise<GeocodingResult[]> {
+    const encodedQuery = encodeURIComponent(query);
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedQuery}.json?access_token=${this.mapboxToken}&country=za&limit=5`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (!data.features || data.features.length === 0) {
+      return [];
+    }
+
+    return data.features.map((feature: any) => ({
+      location: {
+        lat: feature.center[1],
+        lng: feature.center[0],
+        formattedAddress: feature.place_name,
+        placeId: feature.id,
+      },
+      confidence: feature.relevance / 10,
+      source: 'mapbox',
+    }));
+  }
+
+  static async reverseGeocode(location: GeoLocation): Promise<string> {
+    if (!this.isInitialized) {
+      throw new Error('Map service not initialized. Call initialize() first.');
+    }
+
+    try {
+      if (this.activeProvider === 'google' && this.googleMapsApiKey) {
+        return await this.reverseGeocodeGoogle(location);
+      } else if (this.activeProvider === 'mapbox' && this.mapboxToken) {
+        return await this.reverseGeocodeMapbox(location);
+      }
+      return 'Address not found';
+    } catch (error) {
+      logger.error('Failed to reverse geocode', error);
+      return 'Address not found';
+    }
+  }
+
+  private static async reverseGeocodeGoogle(location: GeoLocation): Promise<string> {
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${location.lat},${location.lng}&key=${this.googleMapsApiKey}`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+      return 'Address not found';
+    }
+
+    return data.results[0].formatted_address;
+  }
+
+  private static async reverseGeocodeMapbox(location: GeoLocation): Promise<string> {
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${location.lng},${location.lat}.json?access_token=${this.mapboxToken}&types=address,poi`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (!data.features || data.features.length === 0) {
+      return 'Address not found';
+    }
+
+    return data.features[0].place_name;
   }
 
   static async getDirections(
@@ -178,85 +241,109 @@ export class MapService {
     destination: GeoLocation,
     travelMode: 'driving' | 'walking' | 'transit' = 'driving'
   ): Promise<RouteInfo> {
+    if (!this.isInitialized) {
+      throw new Error('Map service not initialized. Call initialize() first.');
+    }
+
     try {
-      // In production, call Directions API
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      // Calculate straight-line distance for mock
-      const distanceValue = this.calculateDistance(origin, destination);
-      const durationValue =
-        travelMode === 'walking'
-          ? distanceValue / 1.4 // walking speed ~1.4 m/s
-          : distanceValue / 11.1; // driving speed ~40 km/h
-
-      const distance = this.formatDistance(distanceValue);
-      const duration = this.formatDuration(durationValue);
-
-      // Generate mock route steps
-      const steps: RouteStep[] = [
-        {
-          instruction: `Head ${this.getDirection(
-            origin,
-            this.getMidPoint(origin, destination)
-          )} on Main Road`,
-          distance: this.formatDistance(distanceValue * 0.3),
-          duration: this.formatDuration(durationValue * 0.3),
-          startLocation: origin,
-          endLocation: this.getMidPoint(origin, destination),
-          maneuver: 'straight',
-        },
-        {
-          instruction: `Turn ${
-            this.shouldTurnLeft(origin, destination) ? 'left' : 'right'
-          } onto Oxford Road`,
-          distance: this.formatDistance(distanceValue * 0.4),
-          duration: this.formatDuration(durationValue * 0.4),
-          startLocation: this.getMidPoint(origin, destination),
-          endLocation: this.getMidPoint(
-            this.getMidPoint(origin, destination),
-            destination
-          ),
-          maneuver: this.shouldTurnLeft(origin, destination)
-            ? 'turn-left'
-            : 'turn-right',
-        },
-        {
-          instruction: 'Continue straight to your destination',
-          distance: this.formatDistance(distanceValue * 0.3),
-          duration: this.formatDuration(durationValue * 0.3),
-          startLocation: this.getMidPoint(
-            this.getMidPoint(origin, destination),
-            destination
-          ),
-          endLocation: destination,
-          maneuver: 'straight',
-        },
-      ];
-
-      // Add final destination step
-      steps.push({
-        instruction: 'Arrive at destination',
-        distance: '0 m',
-        duration: '0 min',
-        startLocation: steps[steps.length - 1]?.endLocation || destination,
-        endLocation: destination,
-        maneuver: 'destination',
-      });
-
-      return {
-        distance,
-        distanceValue,
-        duration,
-        durationValue,
-        steps,
-        polyline: this.encodePolyline(origin, destination),
-        startLocation: origin,
-        endLocation: destination,
-      };
+      if (this.activeProvider === 'google' && this.googleMapsApiKey) {
+        return await this.getDirectionsGoogle(origin, destination, travelMode);
+      } else if (this.activeProvider === 'mapbox' && this.mapboxToken) {
+        return await this.getDirectionsMapbox(origin, destination, travelMode);
+      }
+      throw new Error('No map provider configured');
     } catch (error) {
       logger.error('Failed to get directions', error);
       throw error;
     }
+  }
+
+  private static async getDirectionsGoogle(
+    origin: GeoLocation,
+    destination: GeoLocation,
+    travelMode: 'driving' | 'walking' | 'transit'
+  ): Promise<RouteInfo> {
+    const modeMap = { driving: 'driving', walking: 'walking', transit: 'transit' };
+    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}&mode=${modeMap[travelMode]}&key=${this.googleMapsApiKey}`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (data.status !== 'OK' || !data.routes || data.routes.length === 0) {
+      throw new Error('No route found');
+    }
+
+    const route = data.routes[0];
+    const leg = route.legs[0];
+
+    const steps: RouteStep[] = leg.steps.map((step: any) => ({
+      instruction: step.html_instructions.replace(/<[^>]*>/g, ''),
+      distance: step.distance.text,
+      duration: step.duration.text,
+      startLocation: {
+        lat: step.start_location.lat,
+        lng: step.start_location.lng,
+        formattedAddress: '',
+        placeId: '',
+      },
+      endLocation: {
+        lat: step.end_location.lat,
+        lng: step.end_location.lng,
+        formattedAddress: '',
+        placeId: '',
+      },
+      maneuver: this.parseManeuver(step.maneuver),
+    }));
+
+    return {
+      distance: leg.distance.text,
+      distanceValue: leg.distance.value,
+      duration: leg.duration.text,
+      durationValue: leg.duration.value,
+      steps,
+      polyline: route.overview_polyline.points,
+      startLocation: origin,
+      endLocation: destination,
+    };
+  }
+
+  private static async getDirectionsMapbox(
+    origin: GeoLocation,
+    destination: GeoLocation,
+    travelMode: 'driving' | 'walking' | 'transit'
+  ): Promise<RouteInfo> {
+    const profileMap = { driving: 'driving', walking: 'walking', transit: 'driving' };
+    const url = `https://api.mapbox.com/directions/v5/mapbox/${profileMap[travelMode]}/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?geometries=polyline&steps=true&access_token=${this.mapboxToken}&language=en`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (!data.routes || data.routes.length === 0) {
+      throw new Error('No route found');
+    }
+
+    const route = data.routes[0];
+    const leg = route.legs[0];
+
+    const steps: RouteStep[] = leg.steps.map((step: any) => ({
+      instruction: step.maneuver.instruction,
+      distance: `${(step.distance / 1000).toFixed(1)} km`,
+      duration: `${Math.round(step.duration / 60)} min`,
+      startLocation: origin,
+      endLocation: destination,
+      maneuver: this.parseManeuver(step.maneuver.type),
+    }));
+
+    return {
+      distance: `${(route.distance / 1000).toFixed(1)} km`,
+      distanceValue: route.distance,
+      duration: `${Math.round(route.duration / 60)} min`,
+      durationValue: route.duration,
+      steps,
+      polyline: route.geometry,
+      startLocation: origin,
+      endLocation: destination,
+    };
   }
 
   static async getStaticMapImage(
@@ -266,6 +353,10 @@ export class MapService {
     height: number = 400,
     markers?: GeoLocation[]
   ): Promise<string> {
+    if (!this.isInitialized) {
+      throw new Error('Map service not initialized. Call initialize() first.');
+    }
+
     try {
       if (this.activeProvider === 'google' && this.googleMapsApiKey) {
         let url = `https://maps.googleapis.com/maps/api/staticmap?center=${center.lat},${center.lng}&zoom=${zoom}&size=${width}x${height}&key=${this.googleMapsApiKey}`;
@@ -275,20 +366,15 @@ export class MapService {
             url += `&markers=color:red|${marker.lat},${marker.lng}`;
           });
         }
-
         return url;
-      } else if (this.mapboxToken) {
+      } else if (this.activeProvider === 'mapbox' && this.mapboxToken) {
         let url = `https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/${center.lng},${center.lat},${zoom}/${width}x${height}?access_token=${this.mapboxToken}`;
-
-        if (markers) {
-          url += `&marker=pin-s-teal+${markers[0]?.lng},${markers[0]?.lat}`;
+        if (markers && markers.length > 0) {
+          url += `&marker=pin-s-teal+${markers[0].lng},${markers[0].lat}`;
         }
-
         return url;
       }
-
-      // Fallback to placeholder
-      return `https://placehold.co/${width}x${height}/e0e0e0/808080?text=Map+View`;
+      throw new Error('No map provider configured');
     } catch (error) {
       logger.error('Failed to get static map image', error);
       throw error;
@@ -297,44 +383,66 @@ export class MapService {
 
   static async autocomplete(
     input: string
-  ): Promise<
-    Array<{ description: string; placeId: string; location?: GeoLocation }>
-  > {
+  ): Promise<Array<{ description: string; placeId: string; location?: GeoLocation }>> {
+    if (!this.isInitialized || !input || input.length < 2) {
+      return [];
+    }
+
     try {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      if (!input || input.length < 2) return [];
-
-      return [
-        {
-          description: `${input}, Johannesburg, South Africa`,
-          placeId: `place_${Date.now()}_1`,
-        },
-        {
-          description: `${input}, Cape Town, South Africa`,
-          placeId: `place_${Date.now()}_2`,
-        },
-        {
-          description: `${input}, Durban, South Africa`,
-          placeId: `place_${Date.now()}_3`,
-        },
-      ];
+      if (this.activeProvider === 'google' && this.googleMapsApiKey) {
+        return await this.autocompleteGoogle(input);
+      } else if (this.activeProvider === 'mapbox' && this.mapboxToken) {
+        return await this.autocompleteMapbox(input);
+      }
+      return [];
     } catch (error) {
       logger.error('Failed to autocomplete', error);
       return [];
     }
   }
 
+  private static async autocompleteGoogle(input: string): Promise<Array<{ description: string; placeId: string; location?: GeoLocation }>> {
+    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&key=${this.googleMapsApiKey}&components=country:za`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (data.status !== 'OK' || !data.predictions) {
+      return [];
+    }
+
+    return data.predictions.map((prediction: any) => ({
+      description: prediction.description,
+      placeId: prediction.place_id,
+    }));
+  }
+
+  private static async autocompleteMapbox(input: string): Promise<Array<{ description: string; placeId: string; location?: GeoLocation }>> {
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(input)}.json?access_token=${this.mapboxToken}&country=za&autocomplete=true&limit=5`;
+
+    const response = await this.fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (!data.features) {
+      return [];
+    }
+
+    return data.features.map((feature: any) => ({
+      description: feature.place_name,
+      placeId: feature.id,
+      location: feature.center ? {
+        lat: feature.center[1],
+        lng: feature.center[0],
+        formattedAddress: feature.place_name,
+        placeId: feature.id,
+      } : undefined,
+    }));
+  }
+
   static async getCurrentLocation(): Promise<GeoLocation> {
     return new Promise((resolve, reject) => {
       if (typeof navigator === 'undefined' || !navigator.geolocation) {
-        reject(
-          new AppError(
-            'Geolocation not supported',
-            'GEOLOCATION_UNSUPPORTED',
-            400
-          )
-        );
+        reject(new AppError('Geolocation not supported', 'GEOLOCATION_UNSUPPORTED', 400));
         return;
       }
 
@@ -348,29 +456,39 @@ export class MapService {
           });
         },
         (error) => {
-          reject(new AppError(error.message, 'GEOLOCATION_ERROR', 400));
-        }
+          let message = 'Failed to get location';
+          switch (error.code) {
+            case error.PERMISSION_DENIED:
+              message = 'Location permission denied. Please enable location services.';
+              break;
+            case error.POSITION_UNAVAILABLE:
+              message = 'Location information is unavailable';
+              break;
+            case error.TIMEOUT:
+              message = 'Location request timed out';
+              break;
+          }
+          reject(new AppError(message, 'GEOLOCATION_ERROR', 400));
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
     });
   }
 
   static async getAddressFromLocation(location: GeoLocation): Promise<string> {
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // Mock reverse geocoding
-      return `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
-    } catch (error) {
-      logger.error('Failed to reverse geocode', error);
-      return 'Address not found';
-    }
+    return this.reverseGeocode(location);
   }
 
-  private static calculateDistance(
-    point1: GeoLocation,
-    point2: GeoLocation
-  ): number {
-    const R = 6371000; // Earth's radius in meters
+  private static parseManeuver(maneuver: string): RouteStep['maneuver'] {
+    if (!maneuver) return 'straight';
+    if (maneuver.includes('left')) return 'turn-left';
+    if (maneuver.includes('right')) return 'turn-right';
+    if (maneuver.includes('arrive') || maneuver.includes('destination')) return 'destination';
+    return 'straight';
+  }
+
+  static calculateDistance(point1: GeoLocation, point2: GeoLocation): number {
+    const R = 6371000;
     const dLat = this.toRad(point2.lat - point1.lat);
     const dLon = this.toRad(point2.lng - point1.lng);
     const a =
@@ -385,87 +503,5 @@ export class MapService {
 
   private static toRad(degrees: number): number {
     return degrees * (Math.PI / 180);
-  }
-
-  private static formatDistance(meters: number): string {
-    if (meters < 1000) {
-      return `${Math.round(meters)} m`;
-    }
-    return `${(meters / 1000).toFixed(1)} km`;
-  }
-
-  private static formatDuration(seconds: number): string {
-    if (seconds < 60) {
-      return `${Math.round(seconds)} sec`;
-    }
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) {
-      return `${minutes} min${minutes !== 1 ? 's' : ''}`;
-    }
-    const hours = Math.floor(minutes / 60);
-    const remainingMinutes = minutes % 60;
-    return `${hours} hr${hours !== 1 ? 's' : ''} ${remainingMinutes} min`;
-  }
-
-  private static getDirection(from: GeoLocation, to: GeoLocation): string {
-    const bearing = this.getBearing(from, to);
-    if (bearing >= 337.5 || bearing < 22.5) return 'north';
-    if (bearing >= 22.5 && bearing < 67.5) return 'northeast';
-    if (bearing >= 67.5 && bearing < 112.5) return 'east';
-    if (bearing >= 112.5 && bearing < 157.5) return 'southeast';
-    if (bearing >= 157.5 && bearing < 202.5) return 'south';
-    if (bearing >= 202.5 && bearing < 247.5) return 'southwest';
-    if (bearing >= 247.5 && bearing < 292.5) return 'west';
-    return 'northwest';
-  }
-
-  private static getBearing(from: GeoLocation, to: GeoLocation): number {
-    const fromLat = this.toRad(from.lat);
-    const fromLng = this.toRad(from.lng);
-    const toLat = this.toRad(to.lat);
-    const toLng = this.toRad(to.lng);
-
-    const y = Math.sin(toLng - fromLng) * Math.cos(toLat);
-    const x =
-      Math.cos(fromLat) * Math.sin(toLat) -
-      Math.sin(fromLat) * Math.cos(toLat) * Math.cos(toLng - fromLng);
-
-    let bearing = (Math.atan2(y, x) * 180) / Math.PI;
-    bearing = (bearing + 360) % 360;
-    return bearing;
-  }
-
-  private static getMidPoint(
-    point1: GeoLocation,
-    point2: GeoLocation
-  ): GeoLocation {
-    return {
-      lat: (point1.lat + point2.lat) / 2,
-      lng: (point1.lng + point2.lng) / 2,
-      formattedAddress: 'Midpoint',
-      placeId: 'midpoint',
-    };
-  }
-
-  private static shouldTurnLeft(
-    origin: GeoLocation,
-    destination: GeoLocation
-  ): boolean {
-    const bearing = this.getBearing(origin, destination);
-    return bearing > 180;
-  }
-
-  private static encodePolyline(
-    origin: GeoLocation,
-    destination: GeoLocation
-  ): string {
-    // Simplified polyline encoding for mock
-    const points = [
-      [origin.lat, origin.lng],
-      [(origin.lat + destination.lat) / 2, (origin.lng + destination.lng) / 2],
-      [destination.lat, destination.lng],
-    ];
-
-    return points.map((p) => `${p[0]},${p[1]}`).join('|');
   }
 }

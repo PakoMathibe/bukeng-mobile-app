@@ -1,5 +1,6 @@
 // domains/auth/authService.ts
 import { supabase } from '@/services/supabase/client';
+import { mapToUser } from '@/services/supabase/userMapper';
 import { User } from '@/types/user';
 
 export class AuthService {
@@ -9,7 +10,6 @@ export class AuthService {
     fullName: string;
     phoneNumber: string;
   }): Promise<{ user: User; token: string }> {
-    // NO DEMO MODE - directly use Supabase
     const { data: authData, error } = await supabase.auth.signUp({
       email: data.email,
       password: data.password,
@@ -30,7 +30,7 @@ export class AuthService {
       throw new Error('User creation failed');
     }
 
-    // Insert into your users table
+    // Insert into users table
     const { error: insertError } = await supabase
       .from('users')
       .insert({
@@ -43,19 +43,24 @@ export class AuthService {
 
     if (insertError) {
       console.error('Failed to insert user profile:', insertError);
-      // Don't throw - user is already created in auth
     }
 
-    const user: User = {
+    // Get the created profile
+    const { data: profile } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', authData.user.id)
+      .single();
+
+    const user = mapToUser(profile || {
       id: authData.user.id,
       email: data.email,
-      fullName: data.fullName,
-      idNumber: '',
-      phoneNumber: data.phoneNumber,
+      full_name: data.fullName,
+      phone_number: data.phoneNumber,
       status: 'active',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
 
     return { user, token: authData.session?.access_token || '' };
   }
@@ -75,23 +80,22 @@ export class AuthService {
       throw new Error('Login failed');
     }
 
-    // Get user profile from your users table
+    // Get user profile from users table
     const { data: profile } = await supabase
       .from('users')
       .select('*')
       .eq('id', data.user.id)
       .single();
 
-    const user: User = {
+    const user = mapToUser(profile || {
       id: data.user.id,
       email: data.user.email!,
-      fullName: profile?.full_name || data.user.user_metadata?.full_name || '',
-      idNumber: profile?.id_number || '',
-      phoneNumber: profile?.phone_number || data.user.user_metadata?.phone_number || '',
-      status: profile?.status || 'active',
-      createdAt: profile?.created_at || data.user.created_at,
-      updatedAt: new Date().toISOString(),
-    };
+      full_name: data.user.user_metadata?.full_name || '',
+      phone_number: data.user.user_metadata?.phone_number || '',
+      status: 'active',
+      created_at: data.user.created_at,
+      updated_at: new Date().toISOString(),
+    });
 
     return { user, token: data.session.access_token };
   }
@@ -106,15 +110,12 @@ export class AuthService {
       .eq('id', user.id)
       .single();
 
-    return {
-      id: user.id,
-      email: user.email!,
-      fullName: profile?.full_name || user.user_metadata?.full_name || '',
-      idNumber: profile?.id_number || '',
-      phoneNumber: profile?.phone_number || user.user_metadata?.phone_number || '',
-      status: profile?.status || 'active',
-      createdAt: profile?.created_at || user.created_at,
-      updatedAt: new Date().toISOString(),
-    };
+    if (!profile) return null;
+
+    return mapToUser(profile);
+  }
+
+  static async logout(): Promise<void> {
+    await supabase.auth.signOut();
   }
 }

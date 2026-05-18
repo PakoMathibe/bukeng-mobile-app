@@ -1,4 +1,25 @@
 // types/credit.ts
+
+export interface CreditProfile {
+  id: string;
+  userId: string;
+  creditScore: number | null;
+  creditLimit: number | null;
+  availableCredit: number | null;
+  riskLevel: string | null;
+  updatedAt: Date;
+}
+
+export interface CreditDecision {
+  id: string;
+  userId: string;
+  decision: 'approved' | 'denied';
+  reason: string | null;
+  scoreSnapshot: Record<string, unknown>;  // matches DB score_snapshot jsonb
+  createdAt: Date;
+}
+
+// Computed/aggregated types (not directly stored in DB)
 export interface CreditSummary {
   userId: string;
   totalLimit: number;
@@ -22,6 +43,15 @@ export interface CreditSummary {
   lastUpdated: Date;
 }
 
+export interface CreditHistoryEntry {
+  date: Date;
+  balance: number;
+  limit: number;
+  utilization: number;
+  payments: number;
+  purchases: number;
+}
+
 export interface CreditHistory {
   userId: string;
   totalBorrowed: number;
@@ -36,15 +66,6 @@ export interface CreditHistory {
   longestStreak: number;
   currentStreak: number;
   history: CreditHistoryEntry[];
-}
-
-export interface CreditHistoryEntry {
-  date: Date;
-  balance: number;
-  limit: number;
-  utilization: number;
-  payments: number;
-  purchases: number;
 }
 
 export interface CreditCheckResult {

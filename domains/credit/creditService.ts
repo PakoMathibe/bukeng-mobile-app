@@ -1,257 +1,372 @@
 // domains/credit/creditService.ts
-import { User, UserTier, TIER_CONFIGS } from '@/types/user';
-import {
-  CreditSummary,
-  CreditHistory,
-  CreditCheckResult,
-} from '@/types/credit';
-import { CreditScoreEngine } from '@/modules/CreditEngine/scoreUser';
-import { LimitAssignmentEngine } from '@/modules/CreditEngine/assignLimit';
-import { LimitAdjustmentEngine } from '@/modules/CreditEngine/adjustLimit';
-import { AppError, NotFoundError } from '@/lib/errorHandler';
-import { logger } from '@/lib/logger';
-
-// Mock database - in production, use real DB
-interface CreditRecord {
-  userId: string;
-  summary: CreditSummary;
-  history: CreditHistory;
-}
-
-const creditDatabase: Map<string, CreditRecord> = new Map();
+import { supabase } from '@/services/supabase/client';
+import { mapToCreditProfile, mapToCreditProfileRecord } from '@/services/supabase/creditMapper';
+import { CreditProfile, CreditSummary, CreditHistory } from '@/types/credit';
+import { User } from '@/types/user';
 
 export class CreditService {
-  static async getCreditSummary(userId: string): Promise<CreditSummary> {
-    try {
-      const record = creditDatabase.get(userId);
+  /**
+   * Get credit profile for a user
+   */
+  static async getCreditProfile(userId: string): Promise<CreditProfile | null> {
+    const { data, error } = await supabase
+      .from('credit_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
 
-      if (!record) {
-        throw new NotFoundError(`Credit record for user ${userId}`);
-      }
-
-      return record.summary;
-    } catch (error) {
-      logger.error('Failed to get credit summary', error);
-      throw error;
+    if (error && error.code !== 'PGRST116') {
+      console.error('Failed to fetch credit profile:', error);
+      throw new Error('Failed to fetch credit profile');
     }
+
+    if (data) {
+      return mapToCreditProfile(data);
+    }
+
+    return null;
   }
 
-  static async getCreditHistory(userId: string): Promise<CreditHistory> {
-    try {
-      const record = creditDatabase.get(userId);
+  /**
+   * Create or get default credit profile for a user
+   */
+  static async getOrCreateCreditProfile(userId: string): Promise<CreditProfile> {
+    const existing = await this.getCreditProfile(userId);
+    if (existing) return existing;
 
-      if (!record) {
-        throw new NotFoundError(`Credit record for user ${userId}`);
-      }
-
-      return record.history;
-    } catch (error) {
-      logger.error('Failed to get credit history', error);
-      throw error;
-    }
+    return this.createDefaultCreditProfile(userId);
   }
 
-  static async initializeCredit(user: User): Promise<CreditSummary> {
-    try {
-      const tierConfig = TIER_CONFIGS[user.tier as UserTier];
-      const baseLimit = tierConfig.minCreditLimit;
+  /**
+   * Create default credit profile for a new user
+   */
+  static async createDefaultCreditProfile(userId: string): Promise<CreditProfile> {
+    const defaultProfile = {
+      user_id: userId,
+      credit_score: 500,
+      credit_limit: 500,
+      available_credit: 500,
+      used_credit: 0,
+      risk_level: 'medium',
+      on_time_payments: 0,
+      late_payments: 0,
+    };
 
-      // Calculate initial credit score
-      const initialHistory: CreditHistory = {
-        userId: user.id,
-        totalBorrowed: 0,
-        totalRepaid: 0,
-        onTimePayments: 0,
-        latePayments: 0,
-        defaults: 0,
-        averageBalance: 0,
-        peakBalance: 0,
-        lowestBalance: 0,
-        averageUtilization: 0,
-        longestStreak: 0,
-        currentStreak: 0,
-        history: [],
-      };
+    const { data, error } = await supabase
+      .from('credit_profiles')
+      .insert(defaultProfile)
+      .select()
+      .single();
 
-      const creditScore = CreditScoreEngine.calculateScore(
-        user,
-        initialHistory
-      );
-      const limitAssignment = LimitAssignmentEngine.assignLimit(
-        user,
-        creditScore
-      );
-
-      const summary: CreditSummary = {
-        userId: user.id,
-        totalLimit: limitAssignment.limit,
-        availableCredit: limitAssignment.limit,
-        usedCredit: 0,
-        utilizationPercentage: 0,
-        currentBalance: 0,
-        overdueAmount: 0,
-        nextPaymentDate: null,
-        nextPaymentAmount: 0,
-        creditScore: creditScore.score,
-        creditRating: creditScore.rating,
-        tier: user.tier,
-        limitIncreaseEligible: false,
-        nextIncreaseAmount:
-          TIER_CONFIGS[user.tier as UserTier]?.upgradeAmount || 0,
-        nextIncreaseRequirement: {
-          type: 'payments',
-          current: 0,
-          required:
-            TIER_CONFIGS[user.tier as UserTier]?.upgradeRequirement.value || 3,
-        },
-        lastUpdated: new Date(),
-      };
-
-      const record: CreditRecord = {
-        userId: user.id,
-        summary,
-        history: initialHistory,
-      };
-
-      creditDatabase.set(user.id, record);
-
-      return summary;
-    } catch (error) {
-      logger.error('Failed to initialize credit', error);
-      throw new AppError(
-        'Failed to initialize credit',
-        'CREDIT_INIT_ERROR',
-        500
-      );
+    if (error) {
+      console.error('Failed to create credit profile:', error);
+      throw new Error('Failed to create credit profile');
     }
+
+    return mapToCreditProfile(data);
   }
 
-  static async checkEligibility(
-    user: User,
-    requestedAmount: number
-  ): Promise<CreditCheckResult> {
-    try {
-      const summary = await this.getCreditSummary(user.id);
-
-      if (requestedAmount > summary.availableCredit) {
-        return {
-          approved: false,
-          reason: `Insufficient credit. Available: R${summary.availableCredit}`,
-          suggestedLimit: summary.availableCredit,
-          interestRate: 0,
-          conditions: [],
-          validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        };
-      }
-
-      if (summary.creditScore < 500) {
-        return {
-          approved: false,
-          reason: 'Credit score too low. Make on-time payments to improve.',
-          suggestedLimit: 0,
-          interestRate: 0,
-          conditions: ['Make 3 on-time payments to increase eligibility'],
-          validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        };
-      }
-
-      return {
-        approved: true,
-        reason: null,
-        suggestedLimit: requestedAmount,
-        interestRate: 0,
-        conditions: [],
-        validUntil: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      };
-    } catch (error) {
-      logger.error('Failed to check eligibility', error);
-      throw error;
-    }
-  }
-
-  static async updateAfterPayment(
+  /**
+   * Update credit profile after a transaction
+   */
+  static async updateCreditAfterTransaction(
     userId: string,
-    paymentAmount: number,
-    onTime: boolean
-  ): Promise<CreditSummary> {
-    try {
-      const record = creditDatabase.get(userId);
-      if (!record) {
-        throw new NotFoundError(`Credit record for user ${userId}`);
-      }
+    amount: number,
+    isPurchase: boolean
+  ): Promise<CreditProfile> {
+    const profile = await this.getOrCreateCreditProfile(userId);
 
-      const updatedHistory: CreditHistory = {
-        ...record.history,
-        totalRepaid: record.history.totalRepaid + paymentAmount,
-        onTimePayments: record.history.onTimePayments + (onTime ? 1 : 0),
-        latePayments: record.history.latePayments + (onTime ? 0 : 1),
-        currentStreak: onTime ? record.history.currentStreak + 1 : 0,
-        longestStreak: Math.max(
-          record.history.longestStreak,
-          record.history.currentStreak + (onTime ? 1 : 0)
-        ),
-      };
+    const updatedProfile = {
+      ...profile,
+      availableCredit: isPurchase
+        ? profile.availableCredit - amount
+        : profile.availableCredit + amount,
+      usedCredit: isPurchase
+        ? profile.usedCredit + amount
+        : profile.usedCredit - amount,
+      updatedAt: new Date(),
+    };
 
-      const creditScore = CreditScoreEngine.calculateScore(
-        { ...record.summary, tier: record.summary.tier } as User,
-        updatedHistory
-      );
+    const dbRecord = mapToCreditProfileRecord(updatedProfile);
+    delete dbRecord.id;
+    delete dbRecord.created_at;
 
-      const limitAdjustment = LimitAdjustmentEngine.evaluateIncrease(
-        {
-          creditLimit: record.summary.totalLimit,
-          tier: record.summary.tier,
-        } as User,
-        updatedHistory
-      );
+    const { data, error } = await supabase
+      .from('credit_profiles')
+      .update(dbRecord)
+      .eq('user_id', userId)
+      .select()
+      .single();
 
-      const updatedSummary: CreditSummary = {
-        ...record.summary,
-        usedCredit: Math.max(0, record.summary.usedCredit - paymentAmount),
-        availableCredit:
-          record.summary.totalLimit -
-          Math.max(0, record.summary.usedCredit - paymentAmount),
-        utilizationPercentage:
-          ((record.summary.usedCredit - paymentAmount) /
-            record.summary.totalLimit) *
-          100,
-        currentBalance: Math.max(
-          0,
-          record.summary.currentBalance - paymentAmount
-        ),
-        creditScore: creditScore.score,
-        creditRating: creditScore.rating,
-        limitIncreaseEligible: limitAdjustment.adjustmentAmount > 0,
-        nextIncreaseAmount: limitAdjustment.adjustmentAmount,
-        lastUpdated: new Date(),
-      };
-
-      const newRecord: CreditRecord = {
-        ...record,
-        summary: updatedSummary,
-        history: updatedHistory,
-      };
-
-      creditDatabase.set(userId, newRecord);
-
-      return updatedSummary;
-    } catch (error) {
-      logger.error('Failed to update credit after payment', error);
-      throw error;
+    if (error) {
+      console.error('Failed to update credit profile:', error);
+      throw new Error('Failed to update credit profile');
     }
+
+    return mapToCreditProfile(data);
   }
 
-  static async checkLimitIncrease(userId: string): Promise<boolean> {
-    try {
-      const record = creditDatabase.get(userId);
-      if (!record) {
-        throw new NotFoundError(`Credit record for user ${userId}`);
-      }
+  /**
+   * Update credit score based on payment history
+   */
+  static async updateCreditScore(userId: string): Promise<number> {
+    const profile = await this.getOrCreateCreditProfile(userId);
 
-      return record.history.onTimePayments >= 3;
-    } catch (error) {
-      logger.error('Failed to check limit increase', error);
-      throw error;
+    // Fetch user's repayment history
+    const { data: repayments, error: repaymentsError } = await supabase
+      .from('repayments')
+      .select('status, amount_paid, amount_due, due_date')
+      .eq('installment_plan_id', 'user_id');
+
+    if (repaymentsError) {
+      console.error('Failed to fetch repayments:', repaymentsError);
+      return profile.creditScore;
+    }
+
+    // Calculate on-time payment rate
+    const totalRepayments = repayments?.length || 0;
+    const onTimeRepayments = repayments?.filter(r => r.status === 'paid').length || 0;
+    const onTimeRate = totalRepayments > 0 ? onTimeRepayments / totalRepayments : 1;
+
+    // Calculate new credit score (base 500, max 850)
+    let newScore = 500;
+    newScore += Math.min(onTimeRate * 200, 200);
+    
+    // Penalty for late payments
+    const lateCount = repayments?.filter(r => r.status === 'late').length || 0;
+    newScore -= Math.min(lateCount * 25, 150);
+
+    // Ensure score stays within bounds
+    newScore = Math.min(Math.max(newScore, 300), 850);
+
+    const { error } = await supabase
+      .from('credit_profiles')
+      .update({ credit_score: Math.round(newScore) })
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Failed to update credit score:', error);
+      return profile.creditScore;
+    }
+
+    return Math.round(newScore);
+  }
+
+  /**
+   * Check if user can afford a transaction
+   */
+  static async checkAffordability(
+    userId: string,
+    amount: number
+  ): Promise<{
+    affordable: boolean;
+    maxAmount: number;
+    reason?: string;
+  }> {
+    const profile = await this.getOrCreateCreditProfile(userId);
+
+    if (!profile) {
+      return {
+        affordable: false,
+        maxAmount: 0,
+        reason: 'Credit profile not found',
+      };
+    }
+
+    if (amount > profile.availableCredit) {
+      return {
+        affordable: false,
+        maxAmount: profile.availableCredit,
+        reason: `Insufficient credit. Available: R${profile.availableCredit}`,
+      };
+    }
+
+    if (profile.creditScore < 600 && amount > 1000) {
+      return {
+        affordable: false,
+        maxAmount: 1000,
+        reason: 'Lower credit score limits transaction amount to R1,000',
+      };
+    }
+
+    if (profile.creditScore < 550 && amount > 500) {
+      return {
+        affordable: false,
+        maxAmount: 500,
+        reason: 'Credit score too low. Make on-time payments to increase limit.',
+      };
+    }
+
+    return {
+      affordable: true,
+      maxAmount: profile.availableCredit,
+    };
+  }
+
+  /**
+   * Check if user is eligible for credit limit increase
+   */
+  static async checkLimitIncreaseEligibility(userId: string): Promise<{
+    eligible: boolean;
+    currentLimit: number;
+    suggestedNewLimit: number;
+    reason?: string;
+    requiredPaymentsRemaining?: number;
+  }> {
+    const profile = await this.getOrCreateCreditProfile(userId);
+
+    const requiredPayments = 3;
+    const paymentsMade = profile.onTimePayments;
+    
+    if (paymentsMade < requiredPayments) {
+      return {
+        eligible: false,
+        currentLimit: profile.creditLimit,
+        suggestedNewLimit: profile.creditLimit,
+        reason: `Need ${requiredPayments - paymentsMade} more on-time payment(s)`,
+        requiredPaymentsRemaining: requiredPayments - paymentsMade,
+      };
+    }
+
+    if (profile.creditScore < 600) {
+      return {
+        eligible: false,
+        currentLimit: profile.creditLimit,
+        suggestedNewLimit: profile.creditLimit,
+        reason: 'Credit score too low for limit increase',
+        requiredPaymentsRemaining: 0,
+      };
+    }
+
+    let increaseAmount = 250;
+    if (profile.creditScore >= 700) increaseAmount = 500;
+    else if (profile.creditScore >= 650) increaseAmount = 350;
+
+    const newLimit = Math.min(profile.creditLimit + increaseAmount, 5000);
+
+    return {
+      eligible: true,
+      currentLimit: profile.creditLimit,
+      suggestedNewLimit: newLimit,
+    };
+  }
+
+  /**
+   * Apply credit limit increase
+   */
+  static async applyLimitIncrease(userId: string): Promise<CreditProfile> {
+    const eligibility = await this.checkLimitIncreaseEligibility(userId);
+
+    if (!eligibility.eligible) {
+      throw new Error(eligibility.reason || 'Not eligible for limit increase');
+    }
+
+    const profile = await this.getOrCreateCreditProfile(userId);
+    const newLimit = eligibility.suggestedNewLimit;
+    const increaseAmount = newLimit - profile.creditLimit;
+
+    const updatedProfile = {
+      ...profile,
+      creditLimit: newLimit,
+      availableCredit: profile.availableCredit + increaseAmount,
+      usedCredit: profile.usedCredit,
+      onTimePayments: 0,
+      updatedAt: new Date(),
+    };
+
+    const dbRecord = mapToCreditProfileRecord(updatedProfile);
+    delete dbRecord.id;
+
+    const { data, error } = await supabase
+      .from('credit_profiles')
+      .update(dbRecord)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to apply limit increase:', error);
+      throw new Error('Failed to apply limit increase');
+    }
+
+    return mapToCreditProfile(data);
+  }
+
+  /**
+   * Get credit summary for a user (for UserTierManager)
+   */
+  static async getCreditSummary(userId: string): Promise<CreditSummary> {
+    const profile = await this.getOrCreateCreditProfile(userId);
+    
+    const usedCredit = profile.usedCredit || 0;
+    const totalLimit = profile.creditLimit || 0;
+    const utilizationPercentage = totalLimit > 0 ? (usedCredit / totalLimit) * 100 : 0;
+    
+    let creditRating: 'poor' | 'fair' | 'good' | 'excellent' = 'fair';
+    if (profile.creditScore >= 750) creditRating = 'excellent';
+    else if (profile.creditScore >= 650) creditRating = 'good';
+    else if (profile.creditScore >= 550) creditRating = 'fair';
+    else creditRating = 'poor';
+    
+    let tier = 0;
+    if (totalLimit >= 5000) tier = 3;
+    else if (totalLimit >= 1500) tier = 2;
+    else if (totalLimit >= 500) tier = 1;
+    
+    return {
+      userId,
+      totalLimit,
+      availableCredit: profile.availableCredit,
+      usedCredit,
+      utilizationPercentage,
+      currentBalance: usedCredit,
+      overdueAmount: 0,
+      nextPaymentDate: null,
+      nextPaymentAmount: 0,
+      creditScore: profile.creditScore,
+      creditRating,
+      tier,
+      limitIncreaseEligible: profile.onTimePayments >= 3,
+      nextIncreaseAmount: 250,
+      nextIncreaseRequirement: {
+        type: 'payments',
+        current: profile.onTimePayments,
+        required: 3,
+      },
+      lastUpdated: new Date(profile.updatedAt),
+    };
+  }
+
+  /**
+   * Get credit history for a user (for UserTierManager)
+   */
+  static async getCreditHistory(userId: string): Promise<CreditHistory> {
+    const profile = await this.getOrCreateCreditProfile(userId);
+    
+    return {
+      userId,
+      totalBorrowed: profile.usedCredit,
+      totalRepaid: 0,
+      onTimePayments: profile.onTimePayments,
+      latePayments: profile.latePayments,
+      defaults: 0,
+      averageBalance: profile.usedCredit,
+      peakBalance: profile.usedCredit,
+      lowestBalance: 0,
+      averageUtilization: 0,
+      longestStreak: profile.onTimePayments,
+      currentStreak: profile.onTimePayments,
+      history: [],
+    };
+  }
+
+  /**
+   * Initialize credit for a user (for UserTierManager)
+   */
+  static async initializeCredit(user: User): Promise<void> {
+    const existing = await this.getCreditProfile(user.id);
+    if (!existing) {
+      await this.createDefaultCreditProfile(user.id);
     }
   }
 }

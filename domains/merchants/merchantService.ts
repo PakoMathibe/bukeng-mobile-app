@@ -1,14 +1,16 @@
 // domains/merchants/merchantService.ts
 import { supabase } from '@/services/supabase/client';
 import { Merchant, MerchantRating, NearbyMerchantResponse, GeoLocation } from '@/types/merchant';
-import { GoogleMapsService } from '@/services/maps/googleMaps';
+import { mapToMerchant, mapToMerchantRating } from '@/services/supabase/merchantMapper';
 
 export class MerchantService {
+  /**
+   * Get nearby merchants within radius
+   */
   static async getNearbyMerchants(
     location: GeoLocation,
     radius: number = 5
   ): Promise<NearbyMerchantResponse> {
-    // Use PostGIS or simple bounding box for nearby search
     const latDelta = radius / 111;
     const lngDelta = radius / (111 * Math.cos(location.lat * Math.PI / 180));
     
@@ -22,18 +24,23 @@ export class MerchantService {
       .lte('lng', location.lng + lngDelta)
       .order('rating', { ascending: false });
     
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error('Failed to fetch nearby merchants:', error);
+      throw new Error('Failed to fetch merchants');
+    }
     
-    // Calculate distances
-    const merchantsWithDistance = (merchants || []).map(merchant => ({
-      ...merchant,
-      distance: this.calculateDistance(
-        location.lat,
-        location.lng,
-        merchant.lat,
-        merchant.lng
-      ),
-    })).sort((a, b) => a.distance - b.distance);
+    // Calculate distances and map to camelCase
+    const merchantsWithDistance = (merchants || [])
+      .map(merchant => ({
+        ...mapToMerchant(merchant),
+        distance: this.calculateDistance(
+          location.lat,
+          location.lng,
+          merchant.lat,
+          merchant.lng
+        ),
+      }))
+      .sort((a, b) => (a.distance || 0) - (b.distance || 0));
     
     return {
       merchants: merchantsWithDistance,
@@ -43,6 +50,9 @@ export class MerchantService {
     };
   }
   
+  /**
+   * Get merchant by ID
+   */
   static async getMerchantById(id: string): Promise<Merchant | null> {
     const { data, error } = await supabase
       .from('merchants')
@@ -50,20 +60,32 @@ export class MerchantService {
       .eq('id', id)
       .single();
     
-    if (error) return null;
-    return data;
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      console.error('Failed to fetch merchant:', error);
+      throw new Error('Failed to fetch merchant');
+    }
+    
+    return mapToMerchant(data);
   }
   
-  static async searchMerchants(query: string, location?: GeoLocation): Promise<Merchant[]> {
+  /**
+   * Search merchants by name with optional location filter
+   */
+  static async searchMerchants(
+    query: string,
+    location?: GeoLocation,
+    radius?: number
+  ): Promise<Merchant[]> {
     let supabaseQuery = supabase
       .from('merchants')
       .select('*')
       .eq('status', 'active')
       .ilike('name', `%${query}%`);
     
-    if (location) {
-      const latDelta = 5 / 111;
-      const lngDelta = 5 / (111 * Math.cos(location.lat * Math.PI / 180));
+    if (location && radius) {
+      const latDelta = radius / 111;
+      const lngDelta = radius / (111 * Math.cos(location.lat * Math.PI / 180));
       supabaseQuery = supabaseQuery
         .gte('lat', location.lat - latDelta)
         .lte('lat', location.lat + latDelta)
@@ -73,49 +95,188 @@ export class MerchantService {
     
     const { data, error } = await supabaseQuery;
     
-    if (error) return [];
+    if (error) {
+      console.error('Failed to search merchants:', error);
+      return [];
+    }
     
-    return data || [];
+    let merchants = (data || []).map(mapToMerchant);
+    
+    // Calculate distances if location provided
+    if (location) {
+      merchants = merchants.map(merchant => ({
+        ...merchant,
+        distance: this.calculateDistance(
+          location.lat,
+          location.lng,
+          merchant.location.lat,
+          merchant.location.lng
+        ),
+      })).sort((a, b) => (a.distance || 0) - (b.distance || 0));
+    }
+    
+    return merchants;
   }
   
+  /**
+   * Get merchants by category/type
+   */
+  static async getMerchantsByType(
+    businessType: string,
+    location?: GeoLocation,
+    radius?: number
+  ): Promise<Merchant[]> {
+    let supabaseQuery = supabase
+      .from('merchants')
+      .select('*')
+      .eq('status', 'active')
+      .eq('business_type', businessType);
+    
+    if (location && radius) {
+      const latDelta = radius / 111;
+      const lngDelta = radius / (111 * Math.cos(location.lat * Math.PI / 180));
+      supabaseQuery = supabaseQuery
+        .gte('lat', location.lat - latDelta)
+        .lte('lat', location.lat + latDelta)
+        .gte('lng', location.lng - lngDelta)
+        .lte('lng', location.lng + lngDelta);
+    }
+    
+    const { data, error } = await supabaseQuery;
+    
+    if (error) {
+      console.error('Failed to fetch merchants by type:', error);
+      return [];
+    }
+    
+    let merchants = (data || []).map(mapToMerchant);
+    
+    if (location) {
+      merchants = merchants.map(merchant => ({
+        ...merchant,
+        distance: this.calculateDistance(
+          location.lat,
+          location.lng,
+          merchant.location.lat,
+          merchant.location.lng
+        ),
+      })).sort((a, b) => (a.distance || 0) - (b.distance || 0));
+    }
+    
+    return merchants;
+  }
+  
+  /**
+   * Submit a rating for a merchant
+   */
   static async submitRating(
     merchantId: string,
     userId: string,
     rating: number,
     comment?: string
   ): Promise<MerchantRating> {
+    // Validate rating
+    if (rating < 1 || rating > 5) {
+      throw new Error('Rating must be between 1 and 5');
+    }
+    
+    // Check if user already rated this merchant
+    const { data: existing, error: checkError } = await supabase
+      .from('merchant_ratings')
+      .select('id')
+      .eq('merchant_id', merchantId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    
+    if (checkError) {
+      console.error('Failed to check existing rating:', checkError);
+    }
+    
+    if (existing) {
+      throw new Error('You have already rated this merchant');
+    }
+    
+    // Insert rating
     const { data, error } = await supabase
       .from('merchant_ratings')
       .insert({
         merchant_id: merchantId,
         user_id: userId,
         rating,
-        comment,
+        comment: comment || null,
       })
       .select()
       .single();
     
-    if (error) throw new Error(error.message);
+    if (error) {
+      console.error('Failed to submit rating:', error);
+      throw new Error('Failed to submit rating');
+    }
     
-    // Update merchant average rating
-    const { data: ratings } = await supabase
+    // Update merchant average rating (non-blocking)
+    this.updateMerchantAverageRating(merchantId).catch(err => {
+      console.error('Failed to update merchant average rating:', err);
+    });
+    
+    return mapToMerchantRating(data);
+  }
+  
+  /**
+   * Update merchant's average rating and review count
+   */
+  private static async updateMerchantAverageRating(merchantId: string): Promise<void> {
+    const { data: ratings, error } = await supabase
       .from('merchant_ratings')
       .select('rating')
       .eq('merchant_id', merchantId);
     
-    if (ratings && ratings.length > 0) {
-      const avgRating = ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length;
-      await supabase
-        .from('merchants')
-        .update({ rating: avgRating, review_count: ratings.length })
-        .eq('id', merchantId);
+    if (error) {
+      console.error('Failed to fetch ratings for average:', error);
+      return;
     }
     
-    return data;
+    if (!ratings || ratings.length === 0) return;
+    
+    const sum = ratings.reduce((acc, r) => acc + r.rating, 0);
+    const average = sum / ratings.length;
+    
+    await supabase
+      .from('merchants')
+      .update({
+        rating: Math.round(average * 10) / 10,
+        review_count: ratings.length,
+      })
+      .eq('id', merchantId);
   }
   
-  private static calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371;
+  /**
+   * Get all ratings for a merchant
+   */
+  static async getMerchantRatings(merchantId: string): Promise<MerchantRating[]> {
+    const { data, error } = await supabase
+      .from('merchant_ratings')
+      .select('*')
+      .eq('merchant_id', merchantId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Failed to fetch merchant ratings:', error);
+      return [];
+    }
+    
+    return (data || []).map(mapToMerchantRating);
+  }
+  
+  /**
+   * Calculate distance between two coordinates using Haversine formula
+   */
+  private static calculateDistance(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number
+  ): number {
+    const R = 6371; // Earth's radius in km
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +

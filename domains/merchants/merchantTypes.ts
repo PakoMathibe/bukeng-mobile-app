@@ -1,4 +1,7 @@
 // domains/merchants/merchantTypes.ts
+import { Merchant, MerchantType } from '@/types/merchant';
+import { GeoLocation } from '@/types/merchant';
+
 export interface MerchantFilters {
   type?: MerchantType;
   rating?: number;

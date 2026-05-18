@@ -20,8 +20,8 @@ export interface AccessCheckResult {
 export const routeAccessRules: AccessRule[] = [
   // Public routes - tier 0
   { path: '/', requiredTier: 0 },
-  { path: '/login', requiredTier: 0 },
-  { path: '/register', requiredTier: 0 },
+  { path: '/auth/login', requiredTier: 0 },           // Updated: /auth/login
+  { path: '/auth/register', requiredTier: 0 },        // Updated: /auth/register
   { path: '/how-it-works', requiredTier: 0 },
 
   // Explore routes - tier 0 (pre-KYC)
@@ -32,41 +32,46 @@ export const routeAccessRules: AccessRule[] = [
   { path: '/onboarding', requiredTier: 0 },
 
   // Protected routes - tier 1+
-  { path: '/dashboard', requiredTier: 1, redirectTo: '/onboarding/start' },
+  { path: '/dashboard', requiredTier: 1, redirectTo: '/auth/login' },
   {
     path: '/dashboard/wallet',
     requiredTier: 1,
-    redirectTo: '/onboarding/start',
+    redirectTo: '/auth/login',
   },
   {
     path: '/dashboard/transactions',
     requiredTier: 1,
-    redirectTo: '/onboarding/start',
+    redirectTo: '/auth/login',
   },
   {
     path: '/dashboard/repayments',
     requiredTier: 1,
-    redirectTo: '/onboarding/start',
+    redirectTo: '/auth/login',
   },
   {
     path: '/dashboard/merchants',
     requiredTier: 1,
-    redirectTo: '/onboarding/start',
+    redirectTo: '/auth/login',
   },
   {
     path: '/dashboard/checkout',
     requiredTier: 1,
-    redirectTo: '/onboarding/start',
+    redirectTo: '/auth/login',
   },
   {
     path: '/dashboard/profile',
     requiredTier: 1,
-    redirectTo: '/onboarding/start',
+    redirectTo: '/auth/login',
   },
   {
     path: '/dashboard/settings',
     requiredTier: 1,
-    redirectTo: '/onboarding/start',
+    redirectTo: '/auth/login',
+  },
+  {
+    path: '/dashboard/map',
+    requiredTier: 1,
+    redirectTo: '/auth/login',
   },
 
   // Premium features - tier 2+
@@ -108,7 +113,7 @@ export class AccessGuard {
         granted: currentTier >= 1,
         requiredTier: 1,
         currentTier,
-        redirectTo: currentTier < 1 ? '/login' : undefined,
+        redirectTo: currentTier < 1 ? '/auth/login' : undefined,
         reason: currentTier < 1 ? 'Authentication required' : undefined,
       };
     }
@@ -120,7 +125,7 @@ export class AccessGuard {
       granted,
       requiredTier: matchingRule.requiredTier,
       currentTier,
-      redirectTo: !granted ? matchingRule.redirectTo || '/login' : undefined,
+      redirectTo: !granted ? matchingRule.redirectTo || '/auth/login' : undefined,
       reason: !granted
         ? `Tier ${matchingRule.requiredTier} required. Your tier: ${currentTier}`
         : undefined,
@@ -139,7 +144,7 @@ export class AccessGuard {
     }
 
     if (!user) {
-      return '/login';
+      return '/auth/login';
     }
 
     if (user.tier === 0) {
