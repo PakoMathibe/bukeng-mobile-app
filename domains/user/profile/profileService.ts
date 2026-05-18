@@ -1,8 +1,11 @@
 // domains/user/profile/profileService.ts
+import { supabase } from '@/services/supabase/client';
+import { uploadFile } from '@/services/firebase/client';
 import { User } from '@/types/user';
 import { AppError, NotFoundError, ValidationError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { CONSTANTS } from '@/lib/constants';
+import { AuthService } from '@/domains/auth/authService';
 
 export interface ProfileUpdateData {
   fullName?: string;
@@ -21,19 +24,19 @@ export interface KYCDocument {
   fileName: string;
   fileSize: number;
   mimeType: string;
+  fileUrl: string;
   uploadedAt: Date;
   verifiedAt: Date | null;
   status: 'pending' | 'verified' | 'rejected';
   rejectionReason?: string;
 }
 
-// Mock storage - in production, use S3 or similar
-const kycDocuments: Map<string, KYCDocument[]> = new Map();
-
 export class ProfileService {
+  /**
+   * Get user profile
+   */
   static async getProfile(userId: string): Promise<User> {
     try {
-      const { AuthService } = await import('@/domains/auth/authService');
       const user = await AuthService.getUserById(userId);
 
       if (!user) {
@@ -47,13 +50,14 @@ export class ProfileService {
     }
   }
 
+  /**
+   * Update user profile
+   */
   static async updateProfile(
     userId: string,
     data: ProfileUpdateData
   ): Promise<User> {
     try {
-      const { AuthService } = await import('@/domains/auth/authService');
-
       // Validate phone number if provided
       if (
         data.phoneNumber &&
@@ -67,12 +71,18 @@ export class ProfileService {
         throw new ValidationError('Invalid email format');
       }
 
-      const user = await AuthService.updateUser(userId, {
+      const updateData: Partial<User> = {
         fullName: data.fullName,
         phoneNumber: data.phoneNumber,
-        email: data.email,
         updatedAt: new Date(),
-      });
+      };
+
+      // If email is being updated, need to handle auth separately
+      if (data.email) {
+        updateData.email = data.email;
+      }
+
+      const user = await AuthService.updateUser(userId, updateData);
 
       logger.info(`Profile updated for user ${userId}`);
 
@@ -83,6 +93,9 @@ export class ProfileService {
     }
   }
 
+  /**
+   * Upload KYC document to Firebase Storage and save record to Supabase
+   */
   static async uploadKYCDocument(
     userId: string,
     file: File,
@@ -122,20 +135,41 @@ export class ProfileService {
         );
       }
 
+      // Upload to Firebase Storage
+      const timestamp = Date.now();
+      const extension = file.name.split('.').pop();
+      const storagePath = `kyc/${userId}/${type}/${timestamp}.${extension}`;
+      const fileUrl = await uploadFile(file, storagePath);
+
+      // Save record to Supabase
+      const { data, error } = await supabase
+        .from('kyc_records')
+        .insert({
+          user_id: userId,
+          type,
+          file_url: fileUrl,
+          status: 'pending',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to save KYC record:', error);
+        throw new AppError('Failed to save KYC record', 'KYC_SAVE_ERROR', 500);
+      }
+
       const document: KYCDocument = {
-        id: `doc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        id: data.id,
         userId,
         type,
         fileName: file.name,
         fileSize: file.size,
         mimeType: file.type,
+        fileUrl,
         uploadedAt: new Date(),
         verifiedAt: null,
         status: 'pending',
       };
-
-      const existing = kycDocuments.get(userId) || [];
-      kycDocuments.set(userId, [...existing, document]);
 
       logger.info(`KYC document uploaded for user ${userId}`, {
         type,
@@ -149,44 +183,131 @@ export class ProfileService {
     }
   }
 
+  /**
+   * Get all KYC documents for a user
+   */
   static async getKYCDocuments(userId: string): Promise<KYCDocument[]> {
-    return kycDocuments.get(userId) || [];
+    try {
+      const { data, error } = await supabase
+        .from('kyc_records')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        logger.error('Failed to get KYC documents:', error);
+        return [];
+      }
+
+      return (data || []).map(record => ({
+        id: record.id,
+        userId: record.user_id,
+        type: record.type,
+        fileName: record.file_url.split('/').pop() || 'document',
+        fileSize: 0,
+        mimeType: '',
+        fileUrl: record.file_url,
+        uploadedAt: new Date(record.created_at),
+        verifiedAt: record.verified_at ? new Date(record.verified_at) : null,
+        status: record.status,
+        rejectionReason: record.metadata?.rejection_reason,
+      }));
+    } catch (error) {
+      logger.error('Failed to get KYC documents', error);
+      return [];
+    }
   }
 
+  /**
+   * Verify a KYC document (admin only)
+   */
   static async verifyKYCDocument(
     documentId: string,
     verified: boolean,
     rejectionReason?: string
   ): Promise<KYCDocument> {
-    for (const [userId, documents] of kycDocuments) {
-      const docIndex = documents.findIndex((d) => d.id === documentId);
-
-      if (docIndex !== -1) {
-        const document = documents[docIndex]!;
-        const updatedDocument: KYCDocument = {
-          ...document,
-          verifiedAt: verified ? new Date() : null,
+    try {
+      const { data, error } = await supabase
+        .from('kyc_records')
+        .update({
           status: verified ? 'verified' : 'rejected',
-          rejectionReason: verified ? undefined : rejectionReason,
-        };
+          verified_at: verified ? new Date().toISOString() : null,
+          metadata: rejectionReason ? { rejection_reason: rejectionReason } : {},
+        })
+        .eq('id', documentId)
+        .select()
+        .single();
 
-        documents[docIndex] = updatedDocument;
-        kycDocuments.set(userId, documents);
-
-        // If ID document verified, update user's KYC status
-        if (verified && document.type === 'id_document') {
-          const { AuthService } = await import('@/domains/auth/authService');
-          const user = await AuthService.getUserById(userId);
-
-          if (user && user.kycStatus === 'pending') {
-            await AuthService.updateUser(userId, { kycStatus: 'in_progress' });
-          }
-        }
-
-        return updatedDocument;
+      if (error) {
+        logger.error('Failed to verify KYC document:', error);
+        throw new AppError('Failed to verify document', 'KYC_VERIFY_ERROR', 500);
       }
-    }
 
-    throw new NotFoundError(`KYC document ${documentId}`);
+      // If ID document verified, update user's KYC status
+      if (verified && data.type === 'id_document') {
+        const user = await AuthService.getUserById(data.user_id);
+        if (user && user.kycStatus === 'pending') {
+          await AuthService.updateUser(data.user_id, { kycStatus: 'verified' });
+        }
+      }
+
+      return {
+        id: data.id,
+        userId: data.user_id,
+        type: data.type,
+        fileName: data.file_url.split('/').pop() || 'document',
+        fileSize: 0,
+        mimeType: '',
+        fileUrl: data.file_url,
+        uploadedAt: new Date(data.created_at),
+        verifiedAt: data.verified_at ? new Date(data.verified_at) : null,
+        status: data.status,
+        rejectionReason,
+      };
+    } catch (error) {
+      logger.error('Failed to verify KYC document', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get KYC verification status
+   */
+  static async getKYCStatus(userId: string): Promise<{
+    status: 'pending' | 'in_progress' | 'verified' | 'rejected';
+    documents: {
+      idDocument: boolean;
+      selfie: boolean;
+      bankStatement: boolean;
+    };
+  }> {
+    try {
+      const documents = await this.getKYCDocuments(userId);
+      
+      const idDocument = documents.some(d => d.type === 'id_document' && d.status === 'verified');
+      const selfie = documents.some(d => d.type === 'selfie' && d.status === 'verified');
+      const bankStatement = documents.some(d => d.type === 'bank_statement' && d.status === 'verified');
+
+      let status: 'pending' | 'in_progress' | 'verified' | 'rejected' = 'pending';
+      
+      if (idDocument && selfie) {
+        status = 'verified';
+      } else if (documents.some(d => d.status === 'rejected')) {
+        status = 'rejected';
+      } else if (documents.length > 0) {
+        status = 'in_progress';
+      }
+
+      return {
+        status,
+        documents: { idDocument, selfie, bankStatement },
+      };
+    } catch (error) {
+      logger.error('Failed to get KYC status', error);
+      return {
+        status: 'pending',
+        documents: { idDocument: false, selfie: false, bankStatement: false },
+      };
+    }
   }
 }

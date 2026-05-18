@@ -2,12 +2,12 @@
 'use client';
 
 import { useState } from 'react';
-import { CreditCard, Smartphone, Building, CheckCircle } from 'lucide-react';
+import { CreditCard, Smartphone, Building, CheckCircle, Loader2, AlertCircle } from 'lucide-react';
 
 interface PaymentConfirmationProps {
   amount: number;
   merchantName: string;
-  onConfirm: (method: string) => void;
+  onConfirm: (method: string) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -19,6 +19,7 @@ export function PaymentConfirmation({
 }: PaymentConfirmationProps) {
   const [selectedMethod, setSelectedMethod] = useState('debit');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const paymentMethods = [
     {
@@ -42,9 +43,16 @@ export function PaymentConfirmation({
   ];
 
   const handleConfirm = async () => {
+    setError(null);
     setIsProcessing(true);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    onConfirm(selectedMethod);
+    
+    try {
+      await onConfirm(selectedMethod);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Payment failed. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -94,19 +102,34 @@ export function PaymentConfirmation({
         </div>
       </div>
 
+      {error && (
+        <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
       <div className="flex gap-3">
         <button
           onClick={onCancel}
-          className="flex-1 py-3 border border-gray-300 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition"
+          disabled={isProcessing}
+          className="flex-1 py-3 border border-gray-300 rounded-xl font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={handleConfirm}
           disabled={isProcessing}
-          className="flex-1 bg-teal-600 text-white py-3 rounded-xl font-semibold hover:bg-teal-700 transition disabled:opacity-50"
+          className="flex-1 bg-teal-600 text-white py-3 rounded-xl font-semibold hover:bg-teal-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
         >
-          {isProcessing ? 'Processing...' : 'Confirm Payment'}
+          {isProcessing ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Processing...
+            </>
+          ) : (
+            'Confirm Payment'
+          )}
         </button>
       </div>
     </div>

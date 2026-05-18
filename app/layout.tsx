@@ -16,6 +16,9 @@ export const metadata: Metadata = {
     statusBarStyle: 'default',
     title: 'Bukeng',
   },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export const viewport: Viewport = {
@@ -33,6 +36,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        {/* Add this to fix the deprecation warning */}
+        <meta name="mobile-web-app-capable" content="yes" />
+      </head>
       <body className={inter.className}>
         <main className="min-h-screen bg-gray-50 md:flex md:justify-center">
           <div className="md:max-w-md md:w-full md:shadow-xl md:min-h-screen md:relative">

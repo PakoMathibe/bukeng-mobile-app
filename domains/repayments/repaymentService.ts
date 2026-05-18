@@ -1,59 +1,153 @@
 // domains/repayments/repaymentService.ts
-import { Instalment, Order } from '@/types/transaction';
-import { AppError, NotFoundError } from '@/lib/errors';
+import { supabase } from '@/services/supabase/client';
+import { Instalment, Order, Transaction } from '@/types/transaction';
+import { AppError, NotFoundError, ValidationError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { addDays, differenceInDays, isAfter } from 'date-fns';
-
-// Mock databases
-const instalmentDatabase: Map<string, Instalment> = new Map();
-const repaymentTransactionDatabase: Map<string, Transaction> = new Map();
+import { v4 as uuidv4 } from 'uuid';
+import { PaymentProcessor } from '@/modules/PaymentProcessor/processPayment';
+import { CreditService } from '@/domains/credit/creditService';
+import { PaymentService } from '@/domains/payments/paymentService';
 
 export class RepaymentService {
+  /**
+   * Create an instalment record in the database
+   */
   static async createInstalment(
     userId: string,
     instalment: Instalment
   ): Promise<Instalment> {
     try {
-      instalmentDatabase.set(instalment.id, instalment);
+      // Create repayment record in database
+      const { data, error } = await supabase
+        .from('repayments')
+        .insert({
+          id: instalment.id,
+          installment_plan_id: instalment.installmentPlanId,
+          due_date: instalment.dueDate.toISOString().split('T')[0],
+          amount_due: instalment.amount,
+          amount_paid: 0,
+          status: 'pending',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        logger.error('Failed to create instalment:', error);
+        throw new AppError('Failed to create instalment', 'INSTALMENT_CREATE_ERROR', 500);
+      }
+
       logger.info(`Instalment created for user ${userId}`, {
         instalmentId: instalment.id,
       });
-      return instalment;
+      
+      return {
+        ...instalment,
+        id: data.id,
+      };
     } catch (error) {
       logger.error('Failed to create instalment', error);
       throw error;
     }
   }
 
+  /**
+   * Get instalment by ID
+   */
   static async getInstalment(instalmentId: string): Promise<Instalment> {
     try {
-      const instalment = instalmentDatabase.get(instalmentId);
-      if (!instalment) {
+      const { data, error } = await supabase
+        .from('repayments')
+        .select('*, installment_plans(transaction_id)')
+        .eq('id', instalmentId)
+        .single();
+
+      if (error || !data) {
         throw new NotFoundError(`Instalment ${instalmentId}`);
       }
-      return instalment;
+
+      return {
+        id: data.id,
+        orderId: data.installment_plans?.transaction_id,
+        installmentPlanId: data.installment_plan_id,
+        amount: data.amount_due,
+        dueDate: new Date(data.due_date),
+        paidAt: data.paid_at ? new Date(data.paid_at) : null,
+        status: data.status,
+        lateFee: 0, // Calculate dynamically
+        paymentId: null,
+        reminderSent: false,
+        reminderCount: 0,
+      };
     } catch (error) {
       logger.error('Failed to get instalment', error);
       throw error;
     }
   }
 
+  /**
+   * Get all instalments for a user
+   */
   static async getUserInstalments(userId: string): Promise<Instalment[]> {
     try {
-      const { PaymentService } = await import(
-        '@/domains/payments/paymentService'
-      );
-      const orders = await PaymentService.getUserOrders(userId);
-      const allInstalments = orders.flatMap((order) => order.instalments);
-      return allInstalments.sort(
-        (a, b) => a.dueDate.getTime() - b.dueDate.getTime()
-      );
+      // Get all transactions for the user
+      const { data: transactions, error: txError } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('user_id', userId);
+
+      if (txError) {
+        logger.error('Failed to get user transactions:', txError);
+        return [];
+      }
+
+      const transactionIds = transactions.map(t => t.id);
+      
+      if (transactionIds.length === 0) return [];
+
+      // Get all installment plans for those transactions
+      const { data: plans, error: planError } = await supabase
+        .from('installment_plans')
+        .select('id')
+        .in('transaction_id', transactionIds);
+
+      if (planError || !plans) return [];
+
+      const planIds = plans.map(p => p.id);
+      
+      if (planIds.length === 0) return [];
+
+      // Get all repayments for those installment plans
+      const { data: repayments, error: repError } = await supabase
+        .from('repayments')
+        .select('*')
+        .in('installment_plan_id', planIds)
+        .order('due_date', { ascending: true });
+
+      if (repError) return [];
+
+      return repayments.map(r => ({
+        id: r.id,
+        orderId: '',
+        installmentPlanId: r.installment_plan_id,
+        amount: r.amount_due,
+        dueDate: new Date(r.due_date),
+        paidAt: r.paid_at ? new Date(r.paid_at) : null,
+        status: r.status,
+        lateFee: 0,
+        paymentId: null,
+        reminderSent: false,
+        reminderCount: 0,
+      }));
     } catch (error) {
       logger.error('Failed to get user instalments', error);
-      throw error;
+      return [];
     }
   }
 
+  /**
+   * Get upcoming instalments for a user
+   */
   static async getUpcomingInstalments(userId: string): Promise<Instalment[]> {
     try {
       const instalments = await this.getUserInstalments(userId);
@@ -63,10 +157,13 @@ export class RepaymentService {
       );
     } catch (error) {
       logger.error('Failed to get upcoming instalments', error);
-      throw error;
+      return [];
     }
   }
 
+  /**
+   * Get overdue instalments for a user
+   */
   static async getOverdueInstalments(userId: string): Promise<Instalment[]> {
     try {
       const instalments = await this.getUserInstalments(userId);
@@ -76,10 +173,13 @@ export class RepaymentService {
       );
     } catch (error) {
       logger.error('Failed to get overdue instalments', error);
-      throw error;
+      return [];
     }
   }
 
+  /**
+   * Make a repayment for an instalment
+   */
   static async makeRepayment(
     userId: string,
     instalmentId: string,
@@ -110,15 +210,12 @@ export class RepaymentService {
       }
 
       // Process payment
-      const { PaymentProcessor } = await import(
-        '@/modules/PaymentProcessor/processPayment'
-      );
       const paymentResult = await PaymentProcessor.processPayment({
         orderId: instalment.orderId,
         amount: totalAmount,
         paymentMethod: 'debit_order',
         customerId: userId,
-        merchantId: '', // Would need to get from order
+        merchantId: '',
       });
 
       if (!paymentResult.success) {
@@ -129,19 +226,25 @@ export class RepaymentService {
         );
       }
 
-      // Update instalment
-      const updatedInstalment: Instalment = {
-        ...instalment,
-        status: 'paid',
-        paidAt: now,
-        lateFee,
-        paymentId: paymentResult.transactionId,
-      };
-      instalmentDatabase.set(instalmentId, updatedInstalment);
+      // Update instalment in database
+      const { error: updateError } = await supabase
+        .from('repayments')
+        .update({
+          status: 'paid',
+          paid_at: now.toISOString(),
+          amount_paid: instalment.amount,
+        })
+        .eq('id', instalmentId);
 
-      // Create transaction
+      if (updateError) {
+        logger.error('Failed to update instalment:', updateError);
+        throw new AppError('Failed to update repayment', 'UPDATE_ERROR', 500);
+      }
+
+      // Create transaction record
+      const transactionId = paymentResult.transactionId || uuidv4();
       const transaction: Transaction = {
-        id: paymentResult.transactionId || `repay_${Date.now()}`,
+        id: transactionId,
         userId,
         orderId: instalment.orderId,
         type: 'repayment',
@@ -157,10 +260,8 @@ export class RepaymentService {
         createdAt: new Date(),
         completedAt: new Date(),
       };
-      repaymentTransactionDatabase.set(transaction.id, transaction);
 
-      // Update credit
-      const { CreditService } = await import('@/domains/credit/creditService');
+      // Update credit profile
       await CreditService.updateAfterPayment(
         userId,
         instalment.amount,
@@ -178,6 +279,9 @@ export class RepaymentService {
     }
   }
 
+  /**
+   * Get repayment schedule summary for a user
+   */
   static async getRepaymentSchedule(userId: string): Promise<{
     totalDue: number;
     upcoming: Instalment[];
@@ -197,7 +301,7 @@ export class RepaymentService {
       const completed = allInstalments.filter((i) => i.status === 'paid');
 
       const totalDue = [...upcoming, ...overdue].reduce(
-        (sum, i) => sum + i.amount + i.lateFee,
+        (sum, i) => sum + i.amount,
         0
       );
 
@@ -209,36 +313,95 @@ export class RepaymentService {
       };
     } catch (error) {
       logger.error('Failed to get repayment schedule', error);
-      throw error;
+      return {
+        totalDue: 0,
+        upcoming: [],
+        overdue: [],
+        completed: [],
+      };
     }
   }
 
+  /**
+   * Send payment reminders for upcoming instalments
+   */
   static async sendPaymentReminders(): Promise<void> {
     try {
-      const instalments = Array.from(instalmentDatabase.values());
+      // Get all pending repayments
+      const { data: repayments, error } = await supabase
+        .from('repayments')
+        .select('*, installment_plans(transaction_id)')
+        .eq('status', 'pending')
+        .eq('reminder_sent', false);
+
+      if (error) {
+        logger.error('Failed to fetch repayments for reminders:', error);
+        return;
+      }
+
       const now = new Date();
 
-      for (const instalment of instalments) {
-        if (instalment.status !== 'pending') continue;
+      for (const repayment of repayments || []) {
+        const dueDate = new Date(repayment.due_date);
+        const daysUntilDue = differenceInDays(dueDate, now);
 
-        const daysUntilDue = differenceInDays(instalment.dueDate, now);
+        // Send reminder 2 days before due and 1 day before due
+        if ((daysUntilDue === 2 || daysUntilDue === 1) && !repayment.reminder_sent) {
+          // In production, send SMS/push notification here
+          logger.info(`Payment reminder sent for instalment ${repayment.id}`, {
+            dueDate: repayment.due_date,
+            daysUntilDue,
+          });
 
-        // Send reminder 2 days before due
-        if (daysUntilDue === 2 && !instalment.reminderSent) {
-          // In production, send SMS/push notification
-          logger.info(`Payment reminder sent for instalment ${instalment.id}`);
-
-          const updated = {
-            ...instalment,
-            reminderSent: true,
-            reminderCount: instalment.reminderCount + 1,
-            lastReminderSent: now,
-          };
-          instalmentDatabase.set(instalment.id, updated);
+          // Mark reminder as sent
+          await supabase
+            .from('repayments')
+            .update({ 
+              reminder_sent: true,
+              reminder_count: (repayment.reminder_count || 0) + 1,
+              last_reminder_sent: now.toISOString(),
+            })
+            .eq('id', repayment.id);
         }
       }
     } catch (error) {
       logger.error('Failed to send payment reminders', error);
+    }
+  }
+
+  /**
+   * Get repayment statistics for a user
+   */
+  static async getRepaymentStats(userId: string): Promise<{
+    totalRepaid: number;
+    totalLateFees: number;
+    onTimePaymentRate: number;
+    activeInstalments: number;
+  }> {
+    try {
+      const { completed, overdue, upcoming } = await this.getRepaymentSchedule(userId);
+      
+      const totalRepaid = completed.reduce((sum, i) => sum + i.amount, 0);
+      const totalLateFees = completed.reduce((sum, i) => sum + (i.lateFee || 0), 0);
+      const onTimeRate = completed.length > 0 
+        ? (completed.filter(i => i.lateFee === 0).length / completed.length) * 100 
+        : 100;
+      const activeInstalments = overdue.length + upcoming.length;
+
+      return {
+        totalRepaid,
+        totalLateFees,
+        onTimePaymentRate: Math.round(onTimeRate),
+        activeInstalments,
+      };
+    } catch (error) {
+      logger.error('Failed to get repayment stats', error);
+      return {
+        totalRepaid: 0,
+        totalLateFees: 0,
+        onTimePaymentRate: 100,
+        activeInstalments: 0,
+      };
     }
   }
 }

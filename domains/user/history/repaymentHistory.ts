@@ -1,111 +1,107 @@
 // domains/user/history/repaymentHistory.ts
-import { Instalment, Order } from '@/types/transaction';
+import { supabase } from '@/services/supabase/client';
+import { Instalment } from '@/types/transaction';
 import { AppError, NotFoundError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { isAfter, differenceInDays } from 'date-fns';
 
-interface RepaymentRecord {
-  userId: string;
-  instalments: Instalment[];
-  orders: Order[];
-}
-
-const repaymentDatabase: Map<string, RepaymentRecord> = new Map();
-
 export class RepaymentHistoryService {
+  /**
+   * Get all repayment history for a user
+   */
   static async getRepaymentHistory(userId: string): Promise<Instalment[]> {
     try {
-      const record = repaymentDatabase.get(userId);
-      return record?.instalments || [];
+      // Get all transactions for the user
+      const { data: transactions, error: txError } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('user_id', userId);
+
+      if (txError) {
+        logger.error('Failed to get user transactions:', txError);
+        return [];
+      }
+
+      const transactionIds = transactions.map(t => t.id);
+      if (transactionIds.length === 0) return [];
+
+      // Get installment plans
+      const { data: plans, error: planError } = await supabase
+        .from('installment_plans')
+        .select('id')
+        .in('transaction_id', transactionIds);
+
+      if (planError || !plans) return [];
+
+      const planIds = plans.map(p => p.id);
+      if (planIds.length === 0) return [];
+
+      // Get repayments
+      const { data: repayments, error: repError } = await supabase
+        .from('repayments')
+        .select('*')
+        .in('installment_plan_id', planIds)
+        .order('due_date', { ascending: false });
+
+      if (repError) {
+        logger.error('Failed to get repayments:', repError);
+        return [];
+      }
+
+      return repayments.map(r => ({
+        id: r.id,
+        orderId: '',
+        installmentPlanId: r.installment_plan_id,
+        amount: r.amount_due,
+        dueDate: new Date(r.due_date),
+        paidAt: r.paid_at ? new Date(r.paid_at) : null,
+        status: r.status,
+        lateFee: this.calculateLateFee(new Date(r.due_date), r.paid_at ? new Date(r.paid_at) : null),
+        paymentId: null,
+        reminderSent: false,
+        reminderCount: 0,
+      }));
     } catch (error) {
       logger.error('Failed to get repayment history', error);
-      throw error;
+      return [];
     }
   }
 
+  /**
+   * Get upcoming repayments (not overdue)
+   */
   static async getUpcomingRepayments(userId: string): Promise<Instalment[]> {
     try {
-      const record = repaymentDatabase.get(userId);
-      if (!record) return [];
-
+      const instalments = await this.getRepaymentHistory(userId);
       const now = new Date();
-      return record.instalments.filter(
+      return instalments.filter(
         (i) => i.status === 'pending' && !isAfter(now, i.dueDate)
       );
     } catch (error) {
       logger.error('Failed to get upcoming repayments', error);
-      throw error;
+      return [];
     }
   }
 
+  /**
+   * Get overdue repayments
+   */
   static async getOverdueRepayments(userId: string): Promise<Instalment[]> {
     try {
-      const record = repaymentDatabase.get(userId);
-      if (!record) return [];
-
+      const instalments = await this.getRepaymentHistory(userId);
       const now = new Date();
-      return record.instalments.filter(
+      return instalments.filter(
         (i) => i.status === 'pending' && isAfter(now, i.dueDate)
       );
     } catch (error) {
       logger.error('Failed to get overdue repayments', error);
-      throw error;
+      return [];
     }
   }
 
-  static async addInstalment(
-    userId: string,
-    instalment: Instalment
-  ): Promise<void> {
-    try {
-      let record = repaymentDatabase.get(userId);
-
-      if (!record) {
-        record = { userId, instalments: [], orders: [] };
-      }
-
-      record.instalments.push(instalment);
-      repaymentDatabase.set(userId, record);
-
-      logger.info(`Instalment added for user ${userId}`, {
-        instalmentId: instalment.id,
-      });
-    } catch (error) {
-      logger.error('Failed to add instalment', error);
-      throw error;
-    }
-  }
-
-  static async updateInstalment(
-    instalmentId: string,
-    updates: Partial<Instalment>
-  ): Promise<Instalment> {
-    try {
-      for (const [userId, record] of repaymentDatabase) {
-        const instalmentIndex = record.instalments.findIndex(
-          (i) => i.id === instalmentId
-        );
-
-        if (instalmentIndex !== -1) {
-          const updatedInstalment: Instalment = {
-            ...record.instalments[instalmentIndex]!,
-            ...updates,
-          };
-
-          record.instalments[instalmentIndex] = updatedInstalment;
-          repaymentDatabase.set(userId, record);
-
-          return updatedInstalment;
-        }
-      }
-
-      throw new NotFoundError(`Instalment ${instalmentId}`);
-    } catch (error) {
-      logger.error('Failed to update instalment', error);
-      throw error;
-    }
-  }
-
+  /**
+   * Get repayment statistics for a user
+   */
   static async getRepaymentStats(userId: string): Promise<{
     totalDue: number;
     totalPaid: number;
@@ -118,28 +114,24 @@ export class RepaymentHistoryService {
       const instalments = await this.getRepaymentHistory(userId);
 
       const totalDue = instalments.reduce(
-        (sum, i) => sum + i.amount + i.lateFee,
+        (sum, i) => sum + i.amount,
         0
       );
       const totalPaid = instalments
         .filter((i) => i.status === 'paid')
-        .reduce((sum, i) => sum + i.amount + i.lateFee, 0);
+        .reduce((sum, i) => sum + i.amount, 0);
 
       const overdueInstalments = await this.getOverdueRepayments(userId);
       const overdueAmount = overdueInstalments.reduce(
-        (sum, i) => sum + i.amount + i.lateFee,
+        (sum, i) => sum + i.amount,
         0
       );
 
-      const totalCompleted = instalments.filter(
-        (i) => i.status === 'paid'
+      const totalCompleted = instalments.filter((i) => i.status === 'paid').length;
+      const onTimePayments = instalments.filter(
+        (i) => i.status === 'paid' && i.paidAt && i.paidAt <= i.dueDate
       ).length;
-      const onTimeRate =
-        totalCompleted > 0
-          ? instalments.filter(
-              (i) => i.status === 'paid' && i.paidAt && i.paidAt <= i.dueDate
-            ).length / totalCompleted
-          : 1;
+      const onTimeRate = totalCompleted > 0 ? onTimePayments / totalCompleted : 1;
 
       const upcoming = await this.getUpcomingRepayments(userId);
       const nextUpcoming = upcoming.sort(
@@ -150,16 +142,26 @@ export class RepaymentHistoryService {
         totalDue,
         totalPaid,
         overdueAmount,
-        onTimeRate,
+        onTimeRate: Math.round(onTimeRate * 100),
         nextDueDate: nextUpcoming?.dueDate || null,
         nextDueAmount: nextUpcoming?.amount || 0,
       };
     } catch (error) {
       logger.error('Failed to get repayment stats', error);
-      throw error;
+      return {
+        totalDue: 0,
+        totalPaid: 0,
+        overdueAmount: 0,
+        onTimeRate: 100,
+        nextDueDate: null,
+        nextDueAmount: 0,
+      };
     }
   }
 
+  /**
+   * Calculate late fee based on due date and payment date
+   */
   static calculateLateFee(dueDate: Date, paidAt: Date | null): number {
     if (!paidAt) return 0;
     if (paidAt <= dueDate) return 0;

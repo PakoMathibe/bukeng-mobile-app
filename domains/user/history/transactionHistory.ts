@@ -1,19 +1,12 @@
 // domains/user/history/transactionHistory.ts
+import { supabase } from '@/services/supabase/client';
 import { Transaction } from '@/types/transaction';
-import { AppError, NotFoundError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 
-interface TransactionRecord {
-  id: string;
-  userId: string;
-  transaction: Transaction;
-  createdAt: Date;
-}
-
-// Mock database
-const transactionDatabase: Map<string, TransactionRecord[]> = new Map();
-
 export class TransactionHistoryService {
+  /**
+   * Get transactions for a user with pagination and filters
+   */
   static async getTransactions(
     userId: string,
     options?: {
@@ -25,105 +18,103 @@ export class TransactionHistoryService {
     }
   ): Promise<{ transactions: Transaction[]; total: number }> {
     try {
-      let records = transactionDatabase.get(userId) || [];
-
-      // Apply filters
-      let filtered = records.map((r) => r.transaction);
+      let query = supabase
+        .from('transactions')
+        .select('*, merchants(name)', { count: 'exact' })
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
 
       if (options?.type) {
-        filtered = filtered.filter((tx) => tx.type === options.type);
+        query = query.eq('type', options.type);
       }
 
       if (options?.startDate) {
-        filtered = filtered.filter((tx) => tx.createdAt >= options.startDate!);
+        query = query.gte('created_at', options.startDate.toISOString());
       }
 
       if (options?.endDate) {
-        filtered = filtered.filter((tx) => tx.createdAt <= options.endDate!);
-      }
-
-      const total = filtered.length;
-
-      if (options?.offset) {
-        filtered = filtered.slice(options.offset);
+        query = query.lte('created_at', options.endDate.toISOString());
       }
 
       if (options?.limit) {
-        filtered = filtered.slice(0, options.limit);
+        query = query.range(
+          options.offset || 0,
+          (options.offset || 0) + options.limit - 1
+        );
       }
 
+      const { data, error, count } = await query;
+
+      if (error) {
+        logger.error('Failed to get transactions:', error);
+        return { transactions: [], total: 0 };
+      }
+
+      const transactions: Transaction[] = (data || []).map(item => ({
+        id: item.id,
+        userId: item.user_id,
+        orderId: item.id,
+        type: item.type,
+        amount: item.amount,
+        fee: item.fee || 0,
+        total: item.total || item.amount,
+        status: item.status,
+        reference: item.reference || `txn_${item.id.substring(0, 8)}`,
+        metadata: item.metadata || {},
+        createdAt: new Date(item.created_at),
+        completedAt: item.completed_at ? new Date(item.completed_at) : null,
+      }));
+
       return {
-        transactions: filtered,
-        total,
+        transactions,
+        total: count || 0,
       };
     } catch (error) {
       logger.error('Failed to get transactions', error);
-      throw error;
+      return { transactions: [], total: 0 };
     }
   }
 
+  /**
+   * Get a single transaction by ID
+   */
   static async getTransactionById(
     transactionId: string
   ): Promise<Transaction | null> {
     try {
-      for (const records of transactionDatabase.values()) {
-        const record = records.find((r) => r.transaction.id === transactionId);
-        if (record) {
-          return record.transaction;
-        }
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*, merchants(name)')
+        .eq('id', transactionId)
+        .single();
+
+      if (error || !data) {
+        return null;
       }
+
+      return {
+        id: data.id,
+        userId: data.user_id,
+        orderId: data.id,
+        type: data.type,
+        amount: data.amount,
+        fee: data.fee || 0,
+        total: data.total || data.amount,
+        status: data.status,
+        reference: data.reference || `txn_${data.id.substring(0, 8)}`,
+        metadata: data.metadata || {},
+        createdAt: new Date(data.created_at),
+        completedAt: data.completed_at ? new Date(data.completed_at) : null,
+      };
+    } catch (error) {
+      logger.error('Failed to get transaction by ID', error);
       return null;
-    } catch (error) {
-      logger.error('Failed to get transaction', error);
-      throw error;
     }
   }
 
-  static async addTransaction(
-    userId: string,
-    transaction: Transaction
-  ): Promise<void> {
-    try {
-      const records = transactionDatabase.get(userId) || [];
-      records.push({
-        id: transaction.id,
-        userId,
-        transaction,
-        createdAt: new Date(),
-      });
-      transactionDatabase.set(userId, records);
-
-      logger.info(`Transaction added for user ${userId}`, {
-        transactionId: transaction.id,
-      });
-    } catch (error) {
-      logger.error('Failed to add transaction', error);
-      throw error;
-    }
-  }
-
-  static async updateTransactionStatus(
-    transactionId: string,
-    status: Transaction['status']
-  ): Promise<void> {
-    try {
-      for (const [userId, records] of transactionDatabase) {
-        const recordIndex = records.findIndex(
-          (r) => r.transaction.id === transactionId
-        );
-
-        if (recordIndex !== -1) {
-          records[recordIndex]!.transaction.status = status;
-          transactionDatabase.set(userId, records);
-          break;
-        }
-      }
-    } catch (error) {
-      logger.error('Failed to update transaction status', error);
-      throw error;
-    }
-  }
-
+  /**
+   * Get transaction summary for a user
+   */
   static async getTransactionSummary(userId: string): Promise<{
     totalSpent: number;
     totalRepaid: number;
@@ -164,7 +155,72 @@ export class TransactionHistoryService {
       };
     } catch (error) {
       logger.error('Failed to get transaction summary', error);
-      throw error;
+      return {
+        totalSpent: 0,
+        totalRepaid: 0,
+        totalFees: 0,
+        averageTransaction: 0,
+        transactionCount: 0,
+      };
+    }
+  }
+
+  /**
+   * Get transaction by month (for charts)
+   */
+  static async getTransactionsByMonth(
+    userId: string,
+    year: number,
+    month: number
+  ): Promise<Transaction[]> {
+    try {
+      const startDate = new Date(year, month - 1, 1);
+      const endDate = new Date(year, month, 0);
+
+      const { transactions } = await this.getTransactions(userId, {
+        startDate,
+        endDate,
+      });
+
+      return transactions;
+    } catch (error) {
+      logger.error('Failed to get transactions by month', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get spending by category (from transaction metadata or merchant category)
+   */
+  static async getSpendingByCategory(
+    userId: string,
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<{ category: string; amount: number }[]> {
+    try {
+      const { transactions } = await this.getTransactions(userId, {
+        startDate,
+        endDate,
+      });
+
+      const purchases = transactions.filter(
+        (tx) => tx.type === 'purchase' && tx.status === 'completed'
+      );
+
+      const categoryMap = new Map<string, number>();
+
+      for (const purchase of purchases) {
+        const category = (purchase.metadata?.category as string) || 'Other';
+        const current = categoryMap.get(category) || 0;
+        categoryMap.set(category, current + purchase.amount);
+      }
+
+      return Array.from(categoryMap.entries())
+        .map(([category, amount]) => ({ category, amount }))
+        .sort((a, b) => b.amount - a.amount);
+    } catch (error) {
+      logger.error('Failed to get spending by category', error);
+      return [];
     }
   }
 }

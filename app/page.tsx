@@ -9,8 +9,6 @@ import {
   Shield,
   Smartphone,
   ChevronRight,
-  Star,
-  MapPin,
 } from 'lucide-react';
 
 export default function HomePage() {
@@ -39,10 +37,10 @@ export default function HomePage() {
           </p>
 
           <div className="flex gap-3 justify-center">
-            <Link href="auth/register" className="btn-primary text-base">
+            <Link href="/auth/register" className="btn-primary text-base">
               Get Started
             </Link>
-            <Link href="auth/login" className="btn-secondary text-base">
+            <Link href="/auth/login" className="btn-secondary text-base">
               Sign In
             </Link>
           </div>
@@ -129,7 +127,7 @@ export default function HomePage() {
             Join thousands of happy customers
           </p>
           <Link
-            href="/register"
+            href="/auth/register"
             className="inline-block bg-white text-teal-600 px-6 py-3 rounded-xl font-semibold shadow-lg"
           >
             Create Free Account

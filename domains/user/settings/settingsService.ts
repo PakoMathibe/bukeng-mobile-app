@@ -1,7 +1,8 @@
 // domains/user/settings/settingsService.ts
+import { supabase } from '@/services/supabase/client';
 import { AppError, ValidationError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
-import { hashPassword, verifyPassword } from '@/lib/crypto';
+import { hashPassword, verifyPassword } from '@/lib/server-crypto';
 
 export interface NotificationSettings {
   paymentReminders: boolean;
@@ -37,9 +38,6 @@ export interface UserSettings {
   updatedAt: Date;
 }
 
-// Mock database
-const settingsDatabase: Map<string, UserSettings> = new Map();
-
 const defaultNotificationSettings: NotificationSettings = {
   paymentReminders: true,
   paymentReminderDays: 2,
@@ -67,28 +65,68 @@ const defaultPreferenceSettings: PreferenceSettings = {
 };
 
 export class SettingsService {
+  /**
+   * Get user settings from database
+   */
   static async getSettings(userId: string): Promise<UserSettings> {
     try {
-      let settings = settingsDatabase.get(userId);
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
 
-      if (!settings) {
-        settings = {
-          userId,
-          notifications: { ...defaultNotificationSettings },
-          security: { ...defaultSecuritySettings },
-          preferences: { ...defaultPreferenceSettings },
-          updatedAt: new Date(),
-        };
-        settingsDatabase.set(userId, settings);
+      if (error && error.code !== 'PGRST116') {
+        logger.error('Failed to get settings:', error);
       }
 
-      return settings;
+      if (data) {
+        return {
+          userId: data.user_id,
+          notifications: data.notifications || defaultNotificationSettings,
+          security: data.security || defaultSecuritySettings,
+          preferences: data.preferences || defaultPreferenceSettings,
+          updatedAt: new Date(data.updated_at),
+        };
+      }
+
+      // Create default settings for new user
+      return this.createDefaultSettings(userId);
     } catch (error) {
       logger.error('Failed to get settings', error);
-      throw error;
+      return await this.createDefaultSettings(userId);
     }
   }
 
+  /**
+   * Create default settings for a new user
+   */
+  static async createDefaultSettings(userId: string): Promise<UserSettings> {
+    const defaultSettings: UserSettings = {
+      userId,
+      notifications: { ...defaultNotificationSettings },
+      security: { ...defaultSecuritySettings },
+      preferences: { ...defaultPreferenceSettings },
+      updatedAt: new Date(),
+    };
+
+    const { error } = await supabase.from('user_settings').insert({
+      user_id: userId,
+      notifications: defaultSettings.notifications,
+      security: defaultSettings.security,
+      preferences: defaultSettings.preferences,
+    });
+
+    if (error) {
+      logger.error('Failed to create default settings:', error);
+    }
+
+    return defaultSettings;
+  }
+
+  /**
+   * Update notification settings
+   */
   static async updateNotifications(
     userId: string,
     updates: Partial<NotificationSettings>
@@ -96,10 +134,19 @@ export class SettingsService {
     try {
       const settings = await this.getSettings(userId);
       const updated = { ...settings.notifications, ...updates };
-      settings.notifications = updated;
-      settings.updatedAt = new Date();
 
-      settingsDatabase.set(userId, settings);
+      const { error } = await supabase
+        .from('user_settings')
+        .update({
+          notifications: updated,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId);
+
+      if (error) {
+        logger.error('Failed to update notifications:', error);
+        throw new AppError('Failed to update settings', 'UPDATE_ERROR', 500);
+      }
 
       logger.info(`Notification settings updated for user ${userId}`);
 
@@ -110,6 +157,9 @@ export class SettingsService {
     }
   }
 
+  /**
+   * Update security settings
+   */
   static async updateSecurity(
     userId: string,
     updates: Partial<SecuritySettings>
@@ -117,10 +167,19 @@ export class SettingsService {
     try {
       const settings = await this.getSettings(userId);
       const updated = { ...settings.security, ...updates };
-      settings.security = updated;
-      settings.updatedAt = new Date();
 
-      settingsDatabase.set(userId, settings);
+      const { error } = await supabase
+        .from('user_settings')
+        .update({
+          security: updated,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId);
+
+      if (error) {
+        logger.error('Failed to update security settings:', error);
+        throw new AppError('Failed to update settings', 'UPDATE_ERROR', 500);
+      }
 
       logger.info(`Security settings updated for user ${userId}`);
 
@@ -131,6 +190,9 @@ export class SettingsService {
     }
   }
 
+  /**
+   * Update preference settings
+   */
   static async updatePreferences(
     userId: string,
     updates: Partial<PreferenceSettings>
@@ -138,10 +200,19 @@ export class SettingsService {
     try {
       const settings = await this.getSettings(userId);
       const updated = { ...settings.preferences, ...updates };
-      settings.preferences = updated;
-      settings.updatedAt = new Date();
 
-      settingsDatabase.set(userId, settings);
+      const { error } = await supabase
+        .from('user_settings')
+        .update({
+          preferences: updated,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId);
+
+      if (error) {
+        logger.error('Failed to update preferences:', error);
+        throw new AppError('Failed to update settings', 'UPDATE_ERROR', 500);
+      }
 
       logger.info(`Preferences updated for user ${userId}`);
 
@@ -152,6 +223,9 @@ export class SettingsService {
     }
   }
 
+  /**
+   * Change user password
+   */
   static async changePassword(
     userId: string,
     oldPassword: string,
@@ -159,24 +233,40 @@ export class SettingsService {
   ): Promise<boolean> {
     try {
       const { AuthService } = await import('@/domains/auth/authService');
+      
+      // Get user to verify old password
       const user = await AuthService.getUserById(userId);
-
       if (!user) {
         throw new AppError('User not found', 'USER_NOT_FOUND', 404);
       }
 
-      // In production, retrieve actual password hash from database
-      // This is a simplified version
-      const isValid = await verifyPassword(
-        oldPassword,
-        'stored_hash_placeholder'
-      );
+      // In production, get the actual password hash from user_auth table
+      const { data: authRecord } = await supabase
+        .from('user_auth')
+        .select('password_hash')
+        .eq('user_id', userId)
+        .single();
 
+      if (!authRecord) {
+        throw new AppError('Password not set', 'PASSWORD_NOT_SET', 400);
+      }
+
+      const isValid = await verifyPassword(oldPassword, authRecord.password_hash);
       if (!isValid) {
         throw new ValidationError('Current password is incorrect');
       }
 
       const newHash = await hashPassword(newPassword);
+      
+      const { error } = await supabase
+        .from('user_auth')
+        .update({ password_hash: newHash })
+        .eq('user_id', userId);
+
+      if (error) {
+        logger.error('Failed to update password:', error);
+        throw new AppError('Failed to change password', 'PASSWORD_UPDATE_ERROR', 500);
+      }
 
       logger.info(`Password changed for user ${userId}`);
 
@@ -187,13 +277,26 @@ export class SettingsService {
     }
   }
 
+  /**
+   * Delete user account
+   */
   static async deleteAccount(userId: string): Promise<void> {
     try {
-      settingsDatabase.delete(userId);
+      const { AuthService } = await import('@/domains/auth/authService');
+      
+      // Delete user settings
+      await supabase.from('user_settings').delete().eq('user_id', userId);
+      
+      // Delete user profile (cascade will handle related records)
+      await supabase.from('users').delete().eq('id', userId);
+      
+      // Delete auth user (this should cascade, but explicit for safety)
+      await AuthService.deleteUser?.(userId) || await supabase.auth.admin.deleteUser(userId);
+      
       logger.info(`Account deleted for user ${userId}`);
     } catch (error) {
       logger.error('Failed to delete account', error);
-      throw error;
+      throw new AppError('Failed to delete account', 'DELETE_ERROR', 500);
     }
   }
 }
