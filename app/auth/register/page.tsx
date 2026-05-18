@@ -1,4 +1,4 @@
-// app/register/page.tsx
+// app/auth/register/page.tsx
 'use client';
 
 import { useState } from 'react';
@@ -37,7 +37,6 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
-    
     try {
       await register(formData);
       router.push('/onboarding/start');
@@ -159,7 +158,7 @@ export default function RegisterPage() {
 
         <p className="text-center text-gray-600 mt-6">
           Already have an account?{' '}
-          <Link href="/login" className="text-teal-600 font-semibold hover:underline">
+          <Link href="/auth/login" className="text-teal-600 font-semibold hover:underline">
             Sign In
           </Link>
         </p>

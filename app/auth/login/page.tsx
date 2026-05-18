@@ -1,4 +1,4 @@
-// app/login/page.tsx
+// app/auth/login/page.tsx
 'use client';
 
 import { useState } from 'react';
@@ -18,7 +18,6 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
     try {
       await login(email, password);
       router.push('/dashboard');
@@ -90,7 +89,7 @@ export default function LoginPage() {
 
         <p className="text-center text-gray-600 mt-6">
           Don't have an account?{' '}
-          <Link href="/register" className="text-teal-600 font-semibold hover:underline">
+          <Link href="/auth/register" className="text-teal-600 font-semibold hover:underline">
             Sign Up
           </Link>
         </p>

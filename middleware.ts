@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_ROUTES = ['/', '/login', '/register', '/how-it-works', '/merchants', '/map'];
+const PUBLIC_ROUTES = ['/', '/auth/login', '/auth/register', '/how-it-works', '/merchants', '/map'];
 const ONBOARDING_ROUTES = ['/onboarding'];
 
 export function middleware(request: NextRequest) {
@@ -22,7 +22,7 @@ export function middleware(request: NextRequest) {
   const token = request.cookies.get('bukeng_token')?.value;
   
   if (!token && pathname.startsWith('/dashboard')) {
-    const loginUrl = new URL('/login', request.url);
+    const loginUrl = new URL('/auth/login', request.url);
     return NextResponse.redirect(loginUrl);
   }
 

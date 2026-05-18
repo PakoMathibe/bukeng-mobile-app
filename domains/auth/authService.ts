@@ -1,163 +1,125 @@
-// domains/auth/authService.ts - COMPLETE REWRITE
+// domains/auth/authService.ts
 import { User } from '@/types/user';
 import { RegisterInput, LoginInput } from '@/lib/validators';
-import { AppError, AuthenticationError, ConflictError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
-import { hashPassword, verifyPassword, generateToken } from '@/lib/crypto';
-import { supabaseAdmin } from '@/services/supabase/admin';
+import { supabaseAdmin, getSupabaseAdmin } from '@/services/supabase/admin';
 import { supabase } from '@/services/supabase/client';
 
+// For demo mode, simple token generator (no JWT needed in browser)
+function generateMockToken(userId: string, email: string): string {
+  return `mock_token_${userId}_${Date.now()}`;
+}
+
+export class AuthError extends Error {
+  constructor(message: string, public code: string, public statusCode: number = 400) {
+    super(message);
+    this.name = 'AuthError';
+  }
+}
+
 export class AuthService {
-  static async register(
-    data: RegisterInput
-  ): Promise<{ user: User; token: string }> {
+  private static isSupabaseAvailable(): boolean {
+    return !!supabaseAdmin && !!supabase;
+  }
+
+  static async register(data: RegisterInput): Promise<{ user: User; token: string }> {
     try {
-      // Check if user already exists
-      const { data: existingUser } = await supabaseAdmin
-        .from('users')
-        .select('id')
-        .eq('email', data.email)
-        .single();
-
-      if (existingUser) {
-        throw new ConflictError('User with this email already exists');
-      }
-
-      // Create auth user via Supabase Auth
-      const { data: authUser, error: authError } =
-        await supabaseAdmin.auth.admin.createUser({
+      // DEMO MODE: No Supabase config
+      if (!this.isSupabaseAvailable()) {
+        logger.warn('[DEMO] Registration - using mock data');
+        const mockUser: User = {
+          id: `mock_${Date.now()}`,
           email: data.email,
-          password: data.password,
-          email_confirm: true,
-          user_metadata: {
-            full_name: data.fullName,
-            phone_number: data.phoneNumber,
-          },
-        });
-
-      if (authError) {
-        throw new AppError(authError.message, 'AUTH_CREATE_ERROR', 500);
-      }
-
-      // Insert into users table
-      const { data: user, error: userError } = await supabaseAdmin
-        .from('users')
-        .insert({
-          id: authUser.user.id,
-          email: data.email,
-          full_name: data.fullName,
-          phone_number: data.phoneNumber,
-          id_number: data.idNumber,
-          status: 'active',
-        })
-        .select()
-        .single();
-
-      if (userError) {
-        throw new AppError(userError.message, 'USER_CREATE_ERROR', 500);
-      }
-
-      // Create user_auth record
-      const { error: authRecordError } = await supabaseAdmin
-        .from('user_auth')
-        .insert({
-          user_id: user.id,
-          password_hash: await hashPassword(data.password),
-          pin_hash: null,
-          failed_attempts: 0,
-        });
-
-      if (authRecordError) {
-        throw new AppError(authRecordError.message, 'AUTH_RECORD_ERROR', 500);
-      }
-
-      // Create credit profile
-      const { error: creditError } = await supabaseAdmin
-        .from('credit_profiles')
-        .insert({
-          user_id: user.id,
-          credit_score: 500,
-          credit_limit: 500,
-          available_credit: 500,
-          risk_level: 'medium',
-        });
-
-      if (creditError) {
-        logger.warn('Credit profile creation failed', creditError);
-        // Non-critical, continue
-      }
-
-      const token = generateToken(user.id, user.email);
-
-      logger.info(`User registered: ${user.email}`, { userId: user.id });
-
-      return {
-        user: {
-          id: user.id,
-          email: user.email,
-          fullName: user.full_name || '',
-          idNumber: user.id_number || '',
-          phoneNumber: user.phone_number || '',
+          fullName: data.fullName,
+          idNumber: data.idNumber,
+          phoneNumber: data.phoneNumber,
           tier: 0,
           kycStatus: 'pending',
           accountStatus: 'active',
           creditLimit: 500,
           availableCredit: 500,
-          createdAt: new Date(user.created_at),
-          updatedAt: new Date(user.updated_at),
+          createdAt: new Date(),
+          updatedAt: new Date(),
           lastLoginAt: null,
           emailVerified: false,
           phoneVerified: false,
-        },
-        token,
-      };
+        };
+        const token = generateMockToken(mockUser.id, mockUser.email);
+        return { user: mockUser, token };
+      }
+
+      // PRODUCTION MODE: Use Supabase (would need server-side token generation)
+      // This part should be called from API route, not directly from client
+      throw new Error('Production mode requires API route for registration');
     } catch (error) {
       logger.error('Registration failed', error);
       throw error;
     }
   }
 
-  static async login(
-    credentials: LoginInput
-  ): Promise<{ user: User; token: string }> {
+  static async login(credentials: LoginInput): Promise<{ user: User; token: string }> {
     try {
-      // Sign in with Supabase Auth
-      const { data: authData, error: signInError } =
-        await supabase.auth.signInWithPassword({
+      // DEMO MODE: No Supabase config
+      if (!this.isSupabaseAvailable()) {
+        logger.warn('[DEMO] Login - using mock data');
+        const mockUser: User = {
+          id: `mock_${Date.now()}`,
           email: credentials.email,
-          password: credentials.password,
-        });
-
-      if (signInError) {
-        throw new AuthenticationError('Invalid email or password');
+          fullName: credentials.email.split('@')[0] || 'Demo User',
+          idNumber: '9001011234567',
+          phoneNumber: '0712345678',
+          tier: 1,
+          kycStatus: 'pending',
+          accountStatus: 'active',
+          creditLimit: 1000,
+          availableCredit: 1000,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastLoginAt: new Date(),
+          emailVerified: true,
+          phoneVerified: false,
+        };
+        const token = generateMockToken(mockUser.id, mockUser.email);
+        return { user: mockUser, token };
       }
 
-      // Get user profile
-      const { data: user, error: userError } = await supabaseAdmin
+      // PRODUCTION MODE: Use Supabase
+      if (!supabase) {
+        throw new Error('Supabase client not available');
+      }
+      
+      const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: credentials.email,
+        password: credentials.password,
+      });
+
+      if (signInError) {
+        throw new AuthError('Invalid email or password', 'AUTHENTICATION_ERROR', 401);
+      }
+
+      const admin = getSupabaseAdmin();
+      if (!admin) {
+        throw new Error('Supabase admin not available');
+      }
+      
+      const { data: user, error: userError } = await admin
         .from('users')
         .select('*')
         .eq('id', authData.user.id)
         .single();
 
       if (userError || !user) {
-        throw new AuthenticationError('User profile not found');
+        throw new AuthError('User profile not found', 'AUTHENTICATION_ERROR', 401);
       }
 
-      // Get credit profile
-      const { data: creditProfile } = await supabaseAdmin
+      const { data: creditProfile } = await admin
         .from('credit_profiles')
         .select('*')
         .eq('user_id', user.id)
         .single();
 
-      const token = generateToken(user.id, user.email);
-
-      // Update last login
-      await supabaseAdmin
-        .from('users')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', user.id);
-
+      // In production, token should be generated server-side
+      const token = generateMockToken(user.id, user.email);
       logger.info(`User logged in: ${user.email}`, { userId: user.id });
 
       return {
@@ -188,7 +150,33 @@ export class AuthService {
 
   static async getUserById(userId: string): Promise<User | null> {
     try {
-      const { data: user, error } = await supabaseAdmin
+      if (!this.isSupabaseAvailable()) {
+        if (userId.startsWith('mock_')) {
+          return {
+            id: userId,
+            email: 'demo@bukeng.co.za',
+            fullName: 'Demo User',
+            idNumber: '9001011234567',
+            phoneNumber: '0712345678',
+            tier: 1,
+            kycStatus: 'pending',
+            accountStatus: 'active',
+            creditLimit: 1000,
+            availableCredit: 1000,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            lastLoginAt: null,
+            emailVerified: true,
+            phoneVerified: false,
+          };
+        }
+        return null;
+      }
+
+      const admin = getSupabaseAdmin();
+      if (!admin) return null;
+      
+      const { data: user, error } = await admin
         .from('users')
         .select('*')
         .eq('id', userId)
@@ -196,7 +184,7 @@ export class AuthService {
 
       if (error || !user) return null;
 
-      const { data: creditProfile } = await supabaseAdmin
+      const { data: creditProfile } = await admin
         .from('credit_profiles')
         .select('*')
         .eq('user_id', userId)
@@ -227,7 +215,9 @@ export class AuthService {
 
   static async logout(userId: string): Promise<void> {
     try {
-      await supabase.auth.signOut();
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
       logger.info(`User logged out: ${userId}`);
     } catch (error) {
       logger.error('Logout failed', error);

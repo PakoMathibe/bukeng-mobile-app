@@ -39,10 +39,10 @@ export default function HomePage() {
           </p>
 
           <div className="flex gap-3 justify-center">
-            <Link href="/register" className="btn-primary text-base">
+            <Link href="auth/register" className="btn-primary text-base">
               Get Started
             </Link>
-            <Link href="/login" className="btn-secondary text-base">
+            <Link href="auth/login" className="btn-secondary text-base">
               Sign In
             </Link>
           </div>

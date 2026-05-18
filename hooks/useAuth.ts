@@ -18,6 +18,7 @@ export function useAuth() {
       setUser(result.user);
       setToken(result.token);
       document.cookie = `bukeng_token=${result.token}; path=/`;
+      localStorage.setItem('auth_token', result.token);
       toast.success('Welcome back!');
       return result;
     } catch (error: any) {
@@ -35,7 +36,8 @@ export function useAuth() {
       setUser(result.user);
       setToken(result.token);
       document.cookie = `bukeng_token=${result.token}; path=/`;
-      toast.success('Account created!');
+      localStorage.setItem('auth_token', result.token);
+      toast.success('Account created! Please complete verification.');
       return result;
     } catch (error: any) {
       toast.error(error.message || 'Registration failed');
