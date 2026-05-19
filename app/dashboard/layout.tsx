@@ -39,16 +39,15 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (!user) {
-      router.push('/login');
+      router.push('/auth/login');
     }
   }, [user, router]);
 
   const handleLogout = () => {
     logout();
-    document.cookie =
-      'bukeng_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT';
+    document.cookie = 'bukeng_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT';
     toast.success('Logged out successfully');
-    router.push('/login');
+    router.push('/auth/login');
   };
 
   if (!user) return null;
@@ -117,10 +116,10 @@ export default function DashboardLayout({
           <div className="absolute bottom-4 left-4 right-4 p-4 bg-gradient-to-r from-teal-50 to-teal-100 rounded-xl">
             <p className="text-xs text-teal-800 font-medium">Credit Limit</p>
             <p className="text-xl font-bold text-teal-600">
-              R{user.creditLimit}
+              R{user.creditLimit?.toLocaleString() || '0'}
             </p>
             <p className="text-xs text-teal-600">
-              Available: R{user.availableCredit}
+              Available: R{user.availableCredit?.toLocaleString() || '0'}
             </p>
           </div>
         </aside>

@@ -1,7 +1,10 @@
 // app/(dashboard)/orders/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useAuthStore } from '@/store/authStore';
+import { useRouter } from 'next/navigation';
+import { PaymentService } from '@/domains/payments/paymentService';
 import {
   Package,
   Clock,
@@ -10,57 +13,38 @@ import {
   Eye,
   ChevronDown,
   ChevronUp,
+  Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
-
-// Mock orders data
-const mockOrders = [
-  {
-    id: 'BKN-001',
-    merchantName: 'SPAR Killarney',
-    amount: 450,
-    serviceFee: 3.6,
-    totalAmount: 453.6,
-    status: 'active',
-    date: '2024-01-15',
-    instalments: [
-      { number: 1, amount: 151.2, paid: true, date: '2024-01-15' },
-      { number: 2, amount: 151.2, paid: false, dueDate: '2024-02-15' },
-      { number: 3, amount: 151.2, paid: false, dueDate: '2024-03-15' },
-    ],
-  },
-  {
-    id: 'BKN-002',
-    merchantName: 'Checkers Rosebank',
-    amount: 320,
-    serviceFee: 2.56,
-    totalAmount: 322.56,
-    status: 'active',
-    date: '2024-01-05',
-    instalments: [
-      { number: 1, amount: 107.52, paid: true, date: '2024-01-05' },
-      { number: 2, amount: 107.52, paid: true, date: '2024-02-05' },
-      { number: 3, amount: 107.52, paid: false, dueDate: '2024-03-05' },
-    ],
-  },
-  {
-    id: 'BKN-003',
-    merchantName: 'Pick n Pay Sandton',
-    amount: 280,
-    serviceFee: 2.24,
-    totalAmount: 282.24,
-    status: 'completed',
-    date: '2023-12-10',
-    instalments: [
-      { number: 1, amount: 94.08, paid: true, date: '2023-12-10' },
-      { number: 2, amount: 94.08, paid: true, date: '2024-01-10' },
-      { number: 3, amount: 94.08, paid: true, date: '2024-02-10' },
-    ],
-  },
-];
+import { toast } from 'sonner';
 
 export default function OrdersPage() {
+  const { user } = useAuthStore();
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState<any[]>([]);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+  const [processingOrder, setProcessingOrder] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      loadOrders();
+    }
+  }, [user]);
+
+  const loadOrders = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const userOrders = await PaymentService.getUserOrders(user.id);
+      setOrders(userOrders);
+    } catch (error) {
+      console.error('Failed to load orders:', error);
+      toast.error('Failed to load orders');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -100,11 +84,29 @@ export default function OrdersPage() {
     setExpandedOrder(expandedOrder === orderId ? null : orderId);
   };
 
-  const totalSpent = mockOrders.reduce((sum, order) => sum + order.amount, 0);
-  const activeOrders = mockOrders.filter((o) => o.status === 'active').length;
-  const completedOrders = mockOrders.filter(
-    (o) => o.status === 'completed'
-  ).length;
+  const handleMakePayment = async (orderId: string) => {
+    setProcessingOrder(orderId);
+    try {
+      // Navigate to checkout or process payment
+      router.push(`/dashboard/checkout?orderId=${orderId}`);
+    } catch (error) {
+      toast.error('Failed to initiate payment');
+    } finally {
+      setProcessingOrder(null);
+    }
+  };
+
+  const totalSpent = orders.reduce((sum, order) => sum + order.amount, 0);
+  const activeOrders = orders.filter((o) => o.status === 'active').length;
+  const completedOrders = orders.filter((o) => o.status === 'completed').length;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 pb-20 md:pb-0">
@@ -112,7 +114,7 @@ export default function OrdersPage() {
         <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
         <div className="text-sm text-gray-500">
           Total spent:{' '}
-          <span className="font-semibold text-gray-900">R{totalSpent}</span>
+          <span className="font-semibold text-gray-900">R{totalSpent.toLocaleString()}</span>
         </div>
       </div>
 
@@ -131,7 +133,7 @@ export default function OrdersPage() {
       </div>
 
       {/* Orders List */}
-      {mockOrders.length === 0 ? (
+      {orders.length === 0 ? (
         <div className="bg-white rounded-xl shadow-sm p-12 text-center">
           <ShoppingBag className="w-16 h-16 mx-auto mb-4 text-gray-300" />
           <p className="text-gray-500">No orders yet</p>
@@ -141,7 +143,7 @@ export default function OrdersPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {mockOrders.map((order) => (
+          {orders.map((order) => (
             <div
               key={order.id}
               className="bg-white rounded-xl shadow-sm overflow-hidden"
@@ -161,13 +163,15 @@ export default function OrdersPage() {
                       {getStatusBadge(order.status)}
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
-                      Order #{order.id}
+                      Order #{order.id.slice(0, 8)}
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
                   <p className="font-bold text-gray-900">R{order.amount}</p>
-                  <p className="text-xs text-gray-500">{order.date}</p>
+                  <p className="text-xs text-gray-500">
+                    {format(new Date(order.createdAt), 'dd MMM yyyy')}
+                  </p>
                 </div>
                 {expandedOrder === order.id ? (
                   <ChevronUp className="w-5 h-5 text-gray-400" />
@@ -254,8 +258,16 @@ export default function OrdersPage() {
 
                     {/* Action Button */}
                     {order.status === 'active' && (
-                      <button className="w-full py-2 bg-teal-600 text-white rounded-lg font-semibold hover:bg-teal-700 transition">
-                        Make a Payment
+                      <button
+                        onClick={() => handleMakePayment(order.id)}
+                        disabled={processingOrder === order.id}
+                        className="w-full py-2 bg-teal-600 text-white rounded-lg font-semibold hover:bg-teal-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                      >
+                        {processingOrder === order.id ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          'Make a Payment'
+                        )}
                       </button>
                     )}
                   </div>

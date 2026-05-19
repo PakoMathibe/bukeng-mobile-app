@@ -11,10 +11,11 @@ export function useAuth() {
   const { user, token, isLoading, setUser, setToken, setLoading, logout } = useAuthStore();
   const router = useRouter();
 
+  // FIX: Pass email and password as separate arguments, not as an object
   const login = useCallback(async (email: string, password: string) => {
     setLoading(true);
     try {
-      const result = await AuthService.login({ email, password });
+      const result = await AuthService.login(email, password);
       setUser(result.user);
       setToken(result.token);
       document.cookie = `bukeng_token=${result.token}; path=/`;
@@ -35,8 +36,8 @@ export function useAuth() {
       setUser(result.user);
       setToken(result.token);
       document.cookie = `bukeng_token=${result.token}; path=/`;
-      toast.success('Account created! Please verify your email.');
-      router.push('/dashboard');
+      toast.success('Account created!');
+      router.push('/onboarding/start');
     } catch (error: any) {
       toast.error(error.message || 'Registration failed');
       throw error;
@@ -46,7 +47,7 @@ export function useAuth() {
   }, [setUser, setToken, setLoading, router]);
 
   const signOut = useCallback(async () => {
-    await AuthService.logout();
+    await supabase.auth.signOut();
     logout();
     document.cookie = 'bukeng_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT';
     toast.success('Logged out');

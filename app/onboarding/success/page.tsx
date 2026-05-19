@@ -1,25 +1,40 @@
 // app/(onboarding)/success/page.tsx
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/authStore';
 import { useOnboardingStore } from '@/store/onboardingStore';
-import { CheckCircle, CreditCard, ShoppingBag, ArrowRight } from 'lucide-react';
+import { useCreditStore } from '@/store/creditStore';
+import { CheckCircle, CreditCard, ShoppingBag, ArrowRight, Loader2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function SuccessPage() {
   const router = useRouter();
   const { user, setUser } = useAuthStore();
   const { resetOnboarding } = useOnboardingStore();
+  const { summary, isLoading } = useCreditStore();
 
-  // Trigger confetti on mount
-  if (typeof window !== 'undefined') {
+  useEffect(() => {
+    // Trigger confetti once on mount
     confetti({
       particleCount: 100,
       spread: 70,
       origin: { y: 0.6 },
+      startVelocity: 15,
+      colors: ['#0d9488', '#14b8a6', '#f59e0b'],
     });
-  }
+
+    // Second burst for effect
+    setTimeout(() => {
+      confetti({
+        particleCount: 50,
+        spread: 100,
+        origin: { y: 0.5, x: 0.3 },
+        startVelocity: 10,
+      });
+    }, 200);
+  }, []);
 
   const handleGoToDashboard = () => {
     // Update user tier to verified
@@ -28,8 +43,8 @@ export default function SuccessPage() {
         ...user,
         tier: 1 as const,
         isVerified: true,
-        creditLimit: 1000,
-        availableCredit: 1000,
+        creditLimit: summary?.creditLimit || 1000,
+        availableCredit: summary?.availableCredit || 1000,
       };
       setUser(updatedUser);
     }
@@ -38,16 +53,30 @@ export default function SuccessPage() {
     router.push('/dashboard');
   };
 
+  // If no user, redirect to login
+  if (!user && !isLoading) {
+    router.push('/auth/login');
+    return null;
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+      </div>
+    );
+  }
+
   const achievements = [
     { icon: CheckCircle, text: 'Identity verified' },
-    { icon: CreditCard, text: 'R1,000 credit limit approved' },
+    { icon: CreditCard, text: `R${summary?.creditLimit || 1000} credit limit approved` },
     { icon: ShoppingBag, text: 'Ready to shop at partner stores' },
   ];
 
   return (
-    <div className="card text-center">
+    <div className="card text-center animate-fade-in">
       <div className="mb-6">
-        <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto">
+        <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto animate-scale">
           <CheckCircle className="w-12 h-12 text-green-600" />
         </div>
       </div>
@@ -63,10 +92,17 @@ export default function SuccessPage() {
         <div className="text-sm text-teal-600 font-semibold mb-1">
           Your Credit Limit
         </div>
-        <div className="text-4xl font-bold text-teal-600 mb-2">R1,000</div>
+        <div className="text-4xl font-bold text-teal-600 mb-2">
+          R{summary?.creditLimit?.toLocaleString() || '1,000'}
+        </div>
         <div className="text-xs text-teal-500">
           Available to use immediately
         </div>
+        {summary?.creditScore && (
+          <div className="mt-2 text-xs text-teal-500">
+            Credit Score: {summary.creditScore}
+          </div>
+        )}
       </div>
 
       <div className="space-y-3 mb-8 text-left">
@@ -83,10 +119,10 @@ export default function SuccessPage() {
 
       <button
         onClick={handleGoToDashboard}
-        className="btn-primary w-full flex items-center justify-center gap-2"
+        className="btn-primary w-full flex items-center justify-center gap-2 group"
       >
         Go to Dashboard
-        <ArrowRight size={18} />
+        <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
       </button>
 
       <p className="text-xs text-gray-500 mt-4">

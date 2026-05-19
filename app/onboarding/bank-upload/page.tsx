@@ -4,46 +4,30 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useOnboardingStore } from '@/store/onboardingStore';
-import {
-  Upload,
-  FileText,
-  CheckCircle,
-  ArrowRight,
-  Banknote,
-} from 'lucide-react';
+import { BankStatementUploadStep } from '@/domains/onboarding/steps/bankStatementUpload';
+import { Upload, FileText, CheckCircle, ArrowRight, Banknote, Loader2, AlertCircle } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { toast } from 'sonner';
 
 export default function BankUploadPage() {
   const router = useRouter();
-  const { setBankUploaded, completeStep } = useOnboardingStore();
+  const { setBankUploaded, completeStep, setBankAnalysis } = useOnboardingStore();
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadComplete, setUploadComplete] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const uploadedFile = acceptedFiles[0];
+    setError(null);
+    
     if (uploadedFile) {
-      // Check file size (max 10MB)
-      if (uploadedFile.size > 10 * 1024 * 1024) {
-        toast.error('File size must be less than 10MB');
+      const validation = BankStatementUploadStep.validateFile(uploadedFile);
+      if (!validation.valid) {
+        toast.error(validation.error);
         return;
       }
-
-      // Check file type
-      const validTypes = [
-        'application/pdf',
-        'text/csv',
-        'application/vnd.ms-excel',
-      ];
-      if (
-        !validTypes.includes(uploadedFile.type) &&
-        !uploadedFile.name.endsWith('.csv')
-      ) {
-        toast.error('Please upload a PDF or CSV file');
-        return;
-      }
-
       setFile(uploadedFile);
     }
   }, []);
@@ -64,16 +48,23 @@ export default function BankUploadPage() {
     }
 
     setIsUploading(true);
+    setError(null);
 
-    // Simulate API upload and analysis
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-    setUploadComplete(true);
-    setBankUploaded(true);
-    completeStep('bank');
-    toast.success('Bank statement uploaded and analyzed!');
-
-    setIsUploading(false);
+    try {
+      const analysis = await BankStatementUploadStep.upload(file);
+      setAnalysisResult(analysis);
+      setBankAnalysis(analysis);
+      setUploadComplete(true);
+      setBankUploaded(true);
+      completeStep('bank');
+      toast.success('Bank statement uploaded and analyzed!');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Upload failed';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleSkip = () => {
@@ -153,6 +144,13 @@ export default function BankUploadPage() {
               </div>
             )}
 
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2 text-red-600">
+                <AlertCircle size={16} />
+                <span className="text-sm">{error}</span>
+              </div>
+            )}
+
             <div className="bg-gradient-to-r from-teal-50 to-teal-100 rounded-lg p-4">
               <h3 className="font-semibold text-teal-800 mb-2">
                 Why upload your bank statement?
@@ -174,9 +172,16 @@ export default function BankUploadPage() {
               <button
                 onClick={handleUpload}
                 disabled={!file || isUploading}
-                className="flex-1 btn-primary"
+                className="flex-1 btn-primary disabled:opacity-50"
               >
-                {isUploading ? 'Uploading & Analyzing...' : 'Upload & Continue'}
+                {isUploading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin inline mr-2" />
+                    Uploading & Analyzing...
+                  </>
+                ) : (
+                  'Upload & Continue'
+                )}
               </button>
               <button
                 onClick={handleSkip}
@@ -196,12 +201,18 @@ export default function BankUploadPage() {
             </h3>
             <p className="text-green-700 mb-4">
               Based on your bank statement, your credit limit has been increased
-              to R1,500
             </p>
             <div className="bg-white rounded-lg p-4 mb-4">
               <p className="text-sm text-gray-600">Your new credit limit</p>
-              <p className="text-3xl font-bold text-teal-600">R1,500</p>
+              <p className="text-3xl font-bold text-teal-600">
+                R{analysisResult?.suggestedCreditLimit || 1500}
+              </p>
             </div>
+            {analysisResult?.monthlyIncome && (
+              <div className="text-sm text-gray-600">
+                Monthly income: R{analysisResult.monthlyIncome.toLocaleString()}
+              </div>
+            )}
           </div>
 
           <button onClick={handleContinue} className="btn-primary w-full">

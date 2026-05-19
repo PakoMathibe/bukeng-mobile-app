@@ -4,12 +4,14 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/authStore';
+import { useOnboardingStore } from '@/store/onboardingStore';
 import { OnboardingService } from '@/domains/onboarding/onboardingService';
-import { ShieldCheck, Smartphone, IdCard, Camera, Sparkles, Clock, ArrowRight } from 'lucide-react';
+import { ShieldCheck, Smartphone, IdCard, Camera, Sparkles, Clock, Loader2 } from 'lucide-react';
 
 export default function StartPage() {
   const router = useRouter();
   const { user } = useAuthStore();
+  const { resetOnboarding } = useOnboardingStore();
   const [hasProgress, setHasProgress] = useState(false);
   const [lastStep, setLastStep] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,29 +30,50 @@ export default function StartPage() {
   }, [user]);
 
   const handleFullVerification = () => {
-    router.push('/onboarding/phone-verification');
+    // Start from the first verification step
+    router.push('/onboarding/id-verification');
   };
 
   const handleExploreFirst = async () => {
-    // Create Tier 0 Explorer user
     if (user) {
-      await OnboardingService.updateProgress(user.id, { lastCompletedStep: 'skipped' });
+      // Mark onboarding as skipped
+      await OnboardingService.updateProgress(user.id, { 
+        phoneVerified: false,
+        emailVerified: false,
+        idVerified: false,
+        selfieVerified: false,
+        bankUploaded: false,
+        lastCompletedStep: 'skipped' 
+      });
+      resetOnboarding();
       router.push('/dashboard?mode=explorer');
     }
   };
 
   const handleResume = () => {
-    if (lastStep === 'phone') router.push('/onboarding/phone-verification');
-    else if (lastStep === 'id') router.push('/onboarding/id-verification');
-    else if (lastStep === 'selfie') router.push('/onboarding/selfie-verification');
-    else if (lastStep === 'bank') router.push('/onboarding/bank-upload');
-    else router.push('/onboarding/phone-verification');
+    // Resume from the last completed step
+    switch (lastStep) {
+      case 'phone':
+        router.push('/onboarding/id-verification');
+        break;
+      case 'id':
+        router.push('/onboarding/selfie-verification');
+        break;
+      case 'selfie':
+        router.push('/onboarding/bank-upload');
+        break;
+      case 'bank':
+        router.push('/onboarding/success');
+        break;
+      default:
+        router.push('/onboarding/id-verification');
+    }
   };
 
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
-        <div className="loader"></div>
+        <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
       </div>
     );
   }
@@ -80,9 +103,9 @@ export default function StartPage() {
               </p>
               <button
                 onClick={handleResume}
-                className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold"
+                className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 transition"
               >
-                Resume →
+                Resume Verification →
               </button>
             </div>
           </div>
@@ -101,11 +124,11 @@ export default function StartPage() {
               See how Bukeng works before verifying. Browse merchants, check rates, understand the product.
             </p>
             <div className="text-xs text-gray-500 mb-3">
-              ✓ Instant access • No personal data needed • Mock preview
+              ✓ Instant access • No personal data needed • Preview mode
             </div>
             <button
               onClick={handleExploreFirst}
-              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-semibold"
+              className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-semibold hover:bg-teal-700 transition"
             >
               Explore Now →
             </button>
@@ -125,11 +148,11 @@ export default function StartPage() {
               Complete verification to unlock real credit and start shopping.
             </p>
             <div className="text-xs text-teal-600 mb-3">
-              ⏱ Takes ~2 minutes • Credit up to R5000 • Shop immediately
+              ⏱ Takes ~2 minutes • Credit up to R5,000 • Shop immediately
             </div>
             <button
               onClick={handleFullVerification}
-              className="px-4 py-2 bg-teal-700 text-white rounded-lg text-sm font-semibold"
+              className="px-4 py-2 bg-teal-700 text-white rounded-lg text-sm font-semibold hover:bg-teal-800 transition"
             >
               Start Verification →
             </button>

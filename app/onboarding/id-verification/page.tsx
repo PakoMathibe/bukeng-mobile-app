@@ -1,24 +1,25 @@
 // app/(onboarding)/id-verification/page.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useOnboardingStore } from '@/store/onboardingStore';
-import { IdCard, CheckCircle, AlertCircle } from 'lucide-react';
+import { IDVerificationStep } from '@/domains/onboarding/steps/idVerification';
+import { IdCard, CheckCircle, AlertCircle, Upload, FileText, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function IDVerificationPage() {
   const router = useRouter();
-  const { setIDVerified, completeStep } = useOnboardingStore();
-  const [idNumber, setIdNumber] = useState('');
+  const { setIDVerified, completeStep, setIDNumber, setIDExtractedInfo } = useOnboardingStore();
+  const [idNumber, setIdNumberState] = useState('');
+  const [idFile, setIdFile] = useState<File | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const validateIDNumber = (id: string) => {
-    // Basic SA ID validation - 13 digits, check digit validation
+  const validateIDNumberFormat = (id: string) => {
     if (!/^\d{13}$/.test(id)) return false;
-
-    // Simple check digit validation (SA ID algorithm)
+    // Check digit validation (SA ID algorithm)
     let total = 0;
     for (let i = 0; i < 12; i++) {
       const digit = parseInt(id[i]);
@@ -33,26 +34,63 @@ export default function IDVerificationPage() {
     return checkDigit === parseInt(id[12]);
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const maxSize = 5 * 1024 * 1024; // 5MB
+      const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+      
+      if (file.size > maxSize) {
+        toast.error('File must be less than 5MB');
+        return;
+      }
+      if (!allowedTypes.includes(file.type)) {
+        toast.error('Please upload a JPG, PNG, or PDF file');
+        return;
+      }
+      setIdFile(file);
+    }
+  };
+
   const handleVerify = async () => {
     setError('');
 
-    if (!validateIDNumber(idNumber)) {
+    if (!validateIDNumberFormat(idNumber)) {
       setError('Please enter a valid 13-digit South African ID number');
       return;
     }
 
     setIsVerifying(true);
 
-    // Simulate API call to verify ID
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    try {
+      const result = await IDVerificationStep.verify(idNumber, idFile || undefined);
+      
+      if (result.valid) {
+        setIDVerified(true);
+        setIDNumber(idNumber);
+        if (result.extractedInfo) {
+          setIDExtractedInfo(result.extractedInfo);
+        }
+        completeStep('id');
+        toast.success('ID verified successfully!');
+        router.push('/onboarding/selfie-verification');
+      } else {
+        setError(result.error || 'Verification failed');
+        toast.error(result.error || 'Verification failed');
+      }
+    } catch (err) {
+      setError('Verification service error. Please try again.');
+      toast.error('Verification failed');
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
-    // Mock successful verification
-    setIDVerified(true);
-    completeStep('id');
-    toast.success('ID verified successfully!');
-    router.push('/onboarding/selfie-verification');
-
-    setIsVerifying(false);
+  const removeFile = () => {
+    setIdFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   return (
@@ -65,7 +103,7 @@ export default function IDVerificationPage() {
           Verify Your ID
         </h1>
         <p className="text-gray-600">
-          Enter your South African ID number for verification
+          Enter your South African ID number and upload your ID document
         </p>
       </div>
 
@@ -78,25 +116,67 @@ export default function IDVerificationPage() {
             type="text"
             value={idNumber}
             onChange={(e) => {
-              setIdNumber(e.target.value);
+              setIdNumberState(e.target.value);
               setError('');
             }}
             className={`input-field text-center text-lg tracking-wider font-mono ${
               error ? 'border-red-500' : ''
             }`}
-            placeholder="000101 1234 567"
+            placeholder="900101 1234 567"
             maxLength={13}
           />
           <p className="text-xs text-gray-500 mt-1">
-            Enter your 13-digit South African ID number (e.g., 9001011234567)
+            Enter your 13-digit South African ID number
           </p>
-          {error && (
-            <div className="flex items-center gap-2 mt-2 text-red-600 text-sm">
-              <AlertCircle size={14} />
-              <span>{error}</span>
-            </div>
-          )}
         </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Upload ID Document (Optional)
+          </label>
+          <div className="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center">
+            {!idFile ? (
+              <>
+                <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                <p className="text-sm text-gray-600">Click to upload your ID document</p>
+                <p className="text-xs text-gray-400 mt-1">JPG, PNG, or PDF (Max 5MB)</p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/jpg,application/pdf"
+                  onChange={handleFileChange}
+                  className="hidden"
+                  id="id-upload"
+                />
+                <label
+                  htmlFor="id-upload"
+                  className="inline-block mt-2 text-teal-600 text-sm font-semibold cursor-pointer hover:underline"
+                >
+                  Select File
+                </label>
+              </>
+            ) : (
+              <div className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-teal-600" />
+                  <span className="text-sm text-gray-700 truncate max-w-[200px]">
+                    {idFile.name}
+                  </span>
+                </div>
+                <button onClick={removeFile} className="p-1 hover:bg-gray-200 rounded">
+                  <X className="w-4 h-4 text-gray-500" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {error && (
+          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
 
         <div className="bg-blue-50 rounded-lg p-4">
           <div className="flex items-start gap-3">
@@ -106,9 +186,8 @@ export default function IDVerificationPage() {
                 Where to find your ID number
               </p>
               <p className="text-xs text-blue-600 mt-1">
-                Your ID number is on your South African ID document or smart ID
-                card. It's a 13-digit number starting with your birth date
-                (YYMMDD).
+                Your ID number is on your South African ID document or smart ID card.
+                It's a 13-digit number starting with your birth date (YYMMDD).
               </p>
             </div>
           </div>

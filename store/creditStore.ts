@@ -1,7 +1,7 @@
 // store/creditStore.ts
 import { create } from 'zustand';
 import { CreditSummary, CreditHistory } from '@/types/credit';
-import { creditService } from '@/services/credit/creditService';
+import { CreditService } from '@/domains/credit/creditService';
 
 interface CreditState {
   summary: CreditSummary | null;
@@ -55,16 +55,15 @@ export const useCreditStore = create<CreditState>()(
       set({ isLoading: true, error: null });
       
       try {
-        const [summary, history] = await Promise.all([
-          creditService.getCreditSummary(userId),
-          creditService.getCreditHistory(userId),
-        ]);
+        // Use CreditService (singular, not creditService)
+        const summary = await CreditService.getCreditSummary(userId);
+        const history = await CreditService.getCreditHistory(userId);
         
         set({ summary, history });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to refresh credit data';
         set({ error: errorMessage });
-        throw error;
+        console.error('Failed to refresh credit:', error);
       } finally {
         set({ isLoading: false });
       }

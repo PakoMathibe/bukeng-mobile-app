@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Wallet, TrendingUp, ShoppingBag, QrCode, Lock, Sparkles, ArrowRight, Clock, CheckCircle } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
-import { TIER_LIMITS } from '@/types/user';
+import { TIER_LIMITS, TIER_CONFIGS } from '@/types/user';
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
@@ -30,6 +30,8 @@ export default function DashboardPage() {
 
   // TIER 0: Explorer Mode
   if (user?.tier === 0) {
+    const tierConfig = TIER_CONFIGS[0];
+    
     return (
       <div className="space-y-5 pb-20">
         <div className="bg-gradient-to-r from-teal-500 to-teal-600 rounded-2xl p-5 text-white">
@@ -54,18 +56,12 @@ export default function DashboardPage() {
             Complete verification to get real credit and start shopping.
           </p>
           <div className="space-y-2 text-left mb-4">
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <CheckCircle className="w-4 h-4 text-green-500" />
-              <span>Get up to R5,000 credit limit</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <CheckCircle className="w-4 h-4 text-green-500" />
-              <span>Pay in 3 interest-free instalments</span>
-            </div>
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <CheckCircle className="w-4 h-4 text-green-500" />
-              <span>Shop at hundreds of partner stores</span>
-            </div>
+            {tierConfig.features.map((feature, idx) => (
+              <div key={idx} className="flex items-center gap-2 text-sm text-gray-600">
+                <CheckCircle className="w-4 h-4 text-green-500" />
+                <span>{feature}</span>
+              </div>
+            ))}
           </div>
           <Link href="/onboarding/start">
             <Button variant="primary" fullWidth>
@@ -92,20 +88,31 @@ export default function DashboardPage() {
   }
 
   // TIER 1+: Full Dashboard
-  const tierInfo = TIER_LIMITS[user?.tier as 1 | 2 | 3] || TIER_LIMITS[1];
-  const utilization = ((user?.creditLimit || 0) - (user?.availableCredit || 0)) / (user?.creditLimit || 1) * 100;
+  const tier = user?.tier as 1 | 2 | 3;
+  const tierInfo = TIER_LIMITS[tier] || TIER_LIMITS[1];
+  const totalLimit = user?.creditLimit || 0;
+  const availableCredit = user?.availableCredit || 0;
+  const usedCredit = totalLimit - availableCredit;
+  const utilization = totalLimit > 0 ? (usedCredit / totalLimit) * 100 : 0;
+
+  // Get on-time payments from user object or default to 0
+  const onTimePayments = user?.onTimePayments || 0;
 
   return (
     <div className="space-y-5 pb-20">
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-teal-500 to-teal-600 rounded-2xl p-5 text-white">
         <h1 className="text-xl font-bold mb-1">
-          Welcome back, {user?.fullName?.split(' ')[0]}!
+          Welcome back, {user?.fullName?.split(' ')[0] || 'User'}!
         </h1>
         <p className="text-teal-100 text-sm mb-4">
-          {tierInfo.name} Member • Credit limit: R{user?.creditLimit?.toLocaleString()}
+          {tierInfo.name} Member • Credit limit: R{totalLimit.toLocaleString()}
         </p>
-        <Button onClick={() => toast.info('QR Scanner would open here')} variant="outline" className="bg-white text-teal-600 border-white">
+        <Button 
+          onClick={() => toast.info('QR Scanner would open here')} 
+          variant="outline" 
+          className="bg-white text-teal-600 border-white hover:bg-gray-100"
+        >
           <QrCode className="w-4 h-4 mr-2" />
           Scan QR Code
         </Button>
@@ -119,10 +126,10 @@ export default function DashboardPage() {
             <span className="text-sm text-gray-500">Available</span>
           </div>
           <p className="text-2xl font-bold text-gray-900">
-            R{user?.availableCredit?.toLocaleString() || '0'}
+            R{availableCredit.toLocaleString()}
           </p>
           <p className="text-xs text-gray-500 mt-1">
-            of R{user?.creditLimit?.toLocaleString() || '0'} limit
+            of R{totalLimit.toLocaleString()} limit
           </p>
         </Card>
         
@@ -133,7 +140,11 @@ export default function DashboardPage() {
           </div>
           <p className="text-2xl font-bold text-gray-900">{tierInfo.name}</p>
           <p className="text-xs text-gray-500 mt-1">
-            {user?.tier === 1 ? 'Verify bank for higher limit' : user?.tier === 2 ? '2 more payments to Premium' : 'Premium member'}
+            {user?.tier === 1 
+              ? 'Verify bank for higher limit' 
+              : user?.tier === 2 
+                ? `${3 - (onTimePayments % 3)} more payments to Premium` 
+                : 'Premium member'}
           </p>
         </Card>
       </div>
@@ -164,20 +175,20 @@ export default function DashboardPage() {
       {/* Quick Actions */}
       <div className="grid grid-cols-2 gap-3">
         <Link href="/dashboard/merchants">
-          <Card className="p-4 text-center hover:shadow-md transition">
+          <Card className="p-4 text-center hover:shadow-md transition cursor-pointer">
             <ShoppingBag className="w-6 h-6 text-teal-600 mx-auto mb-2" />
             <span className="text-sm font-medium">Find Stores</span>
           </Card>
         </Link>
         <Link href="/dashboard/repayments">
-          <Card className="p-4 text-center hover:shadow-md transition">
+          <Card className="p-4 text-center hover:shadow-md transition cursor-pointer">
             <Clock className="w-6 h-6 text-teal-600 mx-auto mb-2" />
             <span className="text-sm font-medium">Repayments</span>
           </Card>
         </Link>
       </div>
       
-      {/* Tier Upgrade Prompt */}
+      {/* Tier Upgrade Prompt - Tier 1 to Tier 2 */}
       {user?.tier === 1 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
           <div className="flex items-start gap-3">
@@ -188,7 +199,7 @@ export default function DashboardPage() {
                 Upload your bank statement to increase your limit to R1,500 and get priority support.
               </p>
               <Link href="/onboarding/bank-upload">
-                <button className="mt-2 text-amber-800 text-sm font-semibold underline">
+                <button className="mt-2 text-amber-800 text-sm font-semibold underline hover:text-amber-900">
                   Upload Bank Statement →
                 </button>
               </Link>
@@ -197,6 +208,7 @@ export default function DashboardPage() {
         </div>
       )}
       
+      {/* Tier Upgrade Prompt - Tier 2 to Tier 3 */}
       {user?.tier === 2 && (
         <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
           <div className="flex items-start gap-3">
@@ -204,7 +216,7 @@ export default function DashboardPage() {
             <div>
               <p className="font-semibold text-purple-800">Almost Premium!</p>
               <p className="text-sm text-purple-700">
-                Make {6 - (user?.onboardingProgress?.bankUploaded ? 3 : 6)} more on-time payments to reach Premium tier with R5,000 limit and 2% cashback.
+                Make {Math.max(0, 6 - onTimePayments)} more on-time payment(s) to reach Premium tier with R5,000 limit and 2% cashback.
               </p>
             </div>
           </div>

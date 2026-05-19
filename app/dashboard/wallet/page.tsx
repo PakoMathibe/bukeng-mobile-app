@@ -1,7 +1,10 @@
 // app/(dashboard)/wallet/page.tsx
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
+import { useCreditStore } from '@/store/creditStore';
+import { TransactionHistoryService } from '@/domains/user/history/transactionHistory';
 import {
   CreditCard,
   TrendingUp,
@@ -9,59 +12,54 @@ import {
   Clock,
   ArrowUpRight,
   History,
+  Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
+import { format } from 'date-fns';
 
 export default function WalletPage() {
   const { user } = useAuthStore();
+  const { summary, refreshCredit, isLoading: creditLoading } = useCreditStore();
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      refreshCredit(user.id);
+      loadTransactions();
+    }
+  }, [user]);
+
+  const loadTransactions = async () => {
+    if (!user) return;
+    setTransactionsLoading(true);
+    try {
+      const result = await TransactionHistoryService.getTransactions(user.id, { limit: 5 });
+      setTransactions(result.transactions);
+    } catch (error) {
+      console.error('Failed to load transactions:', error);
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
 
   if (!user) return null;
 
-  const usedCredit = user.creditLimit - user.availableCredit;
-  const utilization = (usedCredit / user.creditLimit) * 100;
+  const totalLimit = summary?.totalLimit || user.creditLimit || 0;
+  const availableCredit = summary?.availableCredit || user.availableCredit || 0;
+  const usedCredit = totalLimit - availableCredit;
+  const utilization = totalLimit > 0 ? (usedCredit / totalLimit) * 100 : 0;
+  const onTimePayments = summary?.onTimePayments || user.onTimePayments || 0;
 
-  const transactions = [
-    {
-      id: 1,
-      date: '2024-01-20',
-      description: 'Payment to Checkers',
-      amount: -160,
-      type: 'repayment',
-      status: 'completed',
-    },
-    {
-      id: 2,
-      date: '2024-01-15',
-      description: 'Purchase at SPAR',
-      amount: -450,
-      type: 'purchase',
-      status: 'completed',
-    },
-    {
-      id: 3,
-      date: '2024-01-10',
-      description: 'Payment to SPAR',
-      amount: -150,
-      type: 'repayment',
-      status: 'completed',
-    },
-    {
-      id: 4,
-      date: '2024-01-05',
-      description: 'Purchase at Pick n Pay',
-      amount: -280,
-      type: 'purchase',
-      status: 'active',
-    },
-    {
-      id: 5,
-      date: '2024-01-01',
-      description: 'Credit limit increase',
-      amount: 500,
-      type: 'adjustment',
-      status: 'completed',
-    },
-  ];
+  const isLoading = creditLoading || transactionsLoading;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -69,7 +67,7 @@ export default function WalletPage() {
         <h1 className="text-2xl font-bold text-gray-900">Wallet</h1>
         <Link
           href="/dashboard/transactions"
-          className="text-teal-600 text-sm font-medium flex items-center gap-1"
+          className="text-teal-600 text-sm font-medium flex items-center gap-1 hover:underline"
         >
           Transaction History <ArrowUpRight size={14} />
         </Link>
@@ -79,7 +77,7 @@ export default function WalletPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-gradient-to-r from-teal-500 to-teal-600 rounded-2xl p-6 text-white">
           <p className="text-sm opacity-90 mb-1">Available Credit</p>
-          <p className="text-3xl font-bold">R{user.availableCredit}</p>
+          <p className="text-3xl font-bold">R{availableCredit.toLocaleString()}</p>
           <p className="text-sm opacity-80 mt-2">Ready to use today</p>
         </div>
 
@@ -89,7 +87,7 @@ export default function WalletPage() {
             <p className="text-sm text-gray-600">Total Limit</p>
           </div>
           <p className="text-2xl font-bold text-gray-900">
-            R{user.creditLimit}
+            R{totalLimit.toLocaleString()}
           </p>
           <p className="text-xs text-gray-500 mt-1">Lifetime limit</p>
         </div>
@@ -99,7 +97,7 @@ export default function WalletPage() {
             <CreditCard className="w-5 h-5 text-amber-600" />
             <p className="text-sm text-gray-600">Used Credit</p>
           </div>
-          <p className="text-2xl font-bold text-gray-900">R{usedCredit}</p>
+          <p className="text-2xl font-bold text-gray-900">R{usedCredit.toLocaleString()}</p>
           <p className="text-xs text-gray-500 mt-1">
             {Math.round(utilization)}% of total
           </p>
@@ -128,7 +126,7 @@ export default function WalletPage() {
                     ? 'bg-yellow-500'
                     : 'bg-teal-600'
                 }`}
-                style={{ width: `${utilization}%` }}
+                style={{ width: `${Math.min(utilization, 100)}%` }}
               />
             </div>
             <p className="text-xs text-gray-500 mt-1">
@@ -141,7 +139,7 @@ export default function WalletPage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-green-50 rounded-lg p-3 text-center">
               <p className="text-xs text-green-600">On-time Payments</p>
-              <p className="text-xl font-bold text-green-700">3</p>
+              <p className="text-xl font-bold text-green-700">{onTimePayments}</p>
             </div>
             <div className="bg-gray-50 rounded-lg p-3 text-center">
               <p className="text-xs text-gray-600">Late Payments</p>
@@ -157,8 +155,8 @@ export default function WalletPage() {
                   Next Credit Limit Increase
                 </p>
                 <p className="text-xs text-blue-600 mt-1">
-                  Make {3 - (usedCredit > 0 ? 1 : 3)} more on-time payments to
-                  increase your limit by R250
+                  Make {Math.max(0, 3 - (onTimePayments % 3))} more on-time payment(s) to
+                  increase your limit
                 </p>
               </div>
             </div>
@@ -175,35 +173,46 @@ export default function WalletPage() {
           </h2>
         </div>
         <div className="divide-y divide-gray-100">
-          {transactions.slice(0, 5).map((tx) => (
-            <div
-              key={tx.id}
-              className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition"
-            >
-              <div>
-                <p className="font-medium text-gray-900">{tx.description}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <p className="text-xs text-gray-500">{tx.date}</p>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full ${
-                      tx.status === 'completed'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}
-                  >
-                    {tx.status}
-                  </span>
-                </div>
-              </div>
-              <p
-                className={`font-semibold ${
-                  tx.amount < 0 ? 'text-red-600' : 'text-green-600'
-                }`}
-              >
-                {tx.amount < 0 ? '-' : '+'}R{Math.abs(tx.amount)}
-              </p>
+          {transactions.length === 0 ? (
+            <div className="px-6 py-8 text-center text-gray-500">
+              <p>No transactions yet</p>
+              <p className="text-sm mt-1">Your recent activity will appear here</p>
             </div>
-          ))}
+          ) : (
+            transactions.map((tx) => (
+              <div
+                key={tx.id}
+                className="px-6 py-4 flex justify-between items-center hover:bg-gray-50 transition"
+              >
+                <div>
+                  <p className="font-medium text-gray-900">{tx.description || 'Transaction'}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs text-gray-500">
+                      {format(new Date(tx.createdAt), 'dd MMM yyyy')}
+                    </p>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full ${
+                        tx.status === 'completed'
+                          ? 'bg-green-100 text-green-700'
+                          : tx.status === 'pending'
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-gray-100 text-gray-700'
+                      }`}
+                    >
+                      {tx.status}
+                    </span>
+                  </div>
+                </div>
+                <p
+                  className={`font-semibold ${
+                    tx.type === 'repayment' ? 'text-green-600' : 'text-red-600'
+                  }`}
+                >
+                  {tx.type === 'repayment' ? '+' : '-'}R{Math.abs(tx.amount).toLocaleString()}
+                </p>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

@@ -4,22 +4,28 @@
 import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useOnboardingStore } from '@/store/onboardingStore';
-import { Camera, CameraOff, CheckCircle, Upload } from 'lucide-react';
+import { SelfieVerificationStep } from '@/domains/onboarding/steps/selfieVerification';
+import { Camera, CameraOff, CheckCircle, Upload, Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function SelfieVerificationPage() {
   const router = useRouter();
-  const { setSelfieVerified, completeStep } = useOnboardingStore();
+  const { setSelfieVerified, completeStep, idNumber } = useOnboardingStore();
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSelfieUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    setError(null);
+    
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error('Image size must be less than 5MB');
+      const validation = SelfieVerificationStep.validateFile(file);
+      if (!validation.valid) {
+        toast.error(validation.error);
+        setError(validation.error || 'Invalid file');
         return;
       }
 
@@ -36,23 +42,47 @@ export default function SelfieVerificationPage() {
     }
 
     setIsVerifying(true);
+    setError(null);
 
-    // Simulate API call for face matching
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    // Mock successful verification
-    setSelfieVerified(true);
-    completeStep('selfie');
-    toast.success('Selfie verified successfully!');
-    router.push('/onboarding/bank-upload');
-
-    setIsVerifying(false);
+    try {
+      const result = await SelfieVerificationStep.verify(selfieFile, idNumber);
+      
+      if (result.match && result.confidence >= 0.7) {
+        setSelfieVerified(true);
+        completeStep('selfie');
+        toast.success('Selfie verified successfully!');
+        router.push('/onboarding/bank-upload');
+      } else {
+        const errorMsg = `Face match failed (confidence: ${Math.round(result.confidence * 100)}%). Please try another photo.`;
+        setError(errorMsg);
+        toast.error(errorMsg);
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Verification failed';
+      setError(errorMsg);
+      toast.error(errorMsg);
+    } finally {
+      setIsVerifying(false);
+    }
   };
 
   const handleSkip = () => {
-    // Skipping bank upload for now
-    completeStep('bank');
-    router.push('/onboarding/success');
+    // Skip selfie verification (goes to bank upload)
+    completeStep('selfie');
+    router.push('/onboarding/bank-upload');
+  };
+
+  const handleUseCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // In production, capture frame from video stream
+      // For now, fall back to file upload
+      stream.getTracks().forEach(track => track.stop());
+      fileInputRef.current?.click();
+    } catch (err) {
+      toast.error('Unable to access camera. Please upload a photo instead.');
+      fileInputRef.current?.click();
+    }
   };
 
   return (
@@ -102,6 +132,15 @@ export default function SelfieVerificationPage() {
                 <p className="text-xs text-gray-400 mt-2">
                   Supported formats: JPG, PNG (Max 5MB)
                 </p>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleUseCamera();
+                  }}
+                  className="mt-3 text-teal-600 text-sm font-medium hover:underline"
+                >
+                  Or take a photo with camera
+                </button>
               </>
             )}
           </div>
@@ -113,6 +152,13 @@ export default function SelfieVerificationPage() {
             className="hidden"
           />
         </div>
+
+        {error && (
+          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+        )}
 
         <div className="bg-yellow-50 rounded-lg p-4">
           <div className="flex items-start gap-3">
@@ -134,16 +180,23 @@ export default function SelfieVerificationPage() {
         <button
           onClick={handleVerify}
           disabled={isVerifying || !selfieFile}
-          className="btn-primary w-full"
+          className="btn-primary w-full flex items-center justify-center gap-2"
         >
-          {isVerifying ? 'Verifying...' : 'Verify Selfie'}
+          {isVerifying ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Verifying...
+            </>
+          ) : (
+            'Verify Selfie'
+          )}
         </button>
 
         <button
           onClick={handleSkip}
           className="w-full text-gray-500 text-sm font-medium hover:text-gray-700 transition"
         >
-          Skip for now (I'll upload my bank statement later)
+          Skip for now (I'll verify later)
         </button>
       </div>
     </div>
