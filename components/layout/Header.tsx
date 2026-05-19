@@ -1,8 +1,9 @@
 // components/layout/Header.tsx
 'use client';
 
-import { Menu, User, Bell } from 'lucide-react';
+import { Menu, User } from 'lucide-react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useAuthStore } from '@/store/authStore';
 import { usePathname } from 'next/navigation';
 
@@ -11,7 +12,6 @@ interface HeaderProps {
   title?: string;
 }
 
-// Map routes to page titles
 const routeTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/dashboard/wallet': 'Wallet',
@@ -22,16 +22,13 @@ const routeTitles: Record<string, string> = {
   '/dashboard/profile': 'Profile',
   '/dashboard/settings': 'Settings',
   '/dashboard/help': 'Help & Support',
-  '/dashboard/checkout': 'Checkout',
-  '/dashboard/map': 'Find Stores',
 };
 
 export function Header({ onMenuClick, title }: HeaderProps) {
   const { user } = useAuthStore();
   const pathname = usePathname();
-
-  // Use provided title or derive from route
   const displayTitle = title || routeTitles[pathname] || 'Bukeng';
+  const isHome = pathname === '/dashboard';
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-lg border-b border-gray-100">
@@ -45,7 +42,20 @@ export function Header({ onMenuClick, title }: HeaderProps) {
         </button>
 
         <div className="flex-1 text-center">
-          <h1 className="text-lg font-semibold text-gray-900">{displayTitle}</h1>
+          {isHome ? (
+            <div className="flex items-center justify-center gap-2">
+              <Image
+                src="/logo-icon.png"
+                alt="Bukeng"
+                width={28}
+                height={28}
+                className="w-7 h-7"
+              />
+              <span className="text-xl font-bold text-teal-600">Bukeng</span>
+            </div>
+          ) : (
+            <h1 className="text-lg font-semibold text-gray-900">{displayTitle}</h1>
+          )}
         </div>
 
         <Link

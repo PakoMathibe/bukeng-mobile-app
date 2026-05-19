@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
+import Image from 'next/image';
 import { useAuthStore } from '@/store/authStore';
 import { useOfflineSync } from '@/hooks/useOfflineSync';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
@@ -12,6 +13,7 @@ import { SideMenu } from '@/components/layout/SideMenu';
 import { Wifi, WifiOff, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
+// Page titles for the header
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/dashboard/merchants': 'Merchants',
@@ -22,6 +24,8 @@ const pageTitles: Record<string, string> = {
   '/dashboard/profile': 'Profile',
   '/dashboard/settings': 'Settings',
   '/dashboard/help': 'Help & Support',
+  '/dashboard/checkout': 'Checkout',
+  '/dashboard/map': 'Find Stores',
 };
 
 export default function DashboardLayout({

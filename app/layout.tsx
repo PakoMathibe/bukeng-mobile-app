@@ -8,16 +8,22 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'Bukeng - Food Credit When You Need It',
-  description:
-    "Africa's first Buy Now Pay Later platform built exclusively for food.",
+  description: "Africa's first Buy Now Pay Later platform built exclusively for food.",
   manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+      { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
+    ],
+    apple: [
+      { url: '/apple-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
     title: 'Bukeng',
-  },
-  formatDetection: {
-    telephone: false,
   },
 };
 
@@ -37,7 +43,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        {/* Add this to fix the deprecation warning */}
         <meta name="mobile-web-app-capable" content="yes" />
       </head>
       <body className={inter.className}>
