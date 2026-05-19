@@ -45,6 +45,7 @@ import {
    */
   export function mapToMerchant(dbRecord: any): Merchant {
     // Support both column naming conventions
+    // Try latitude/longitude first (your actual DB schema), then fall back to lat/lng
     const lat = dbRecord.latitude ?? dbRecord.lat ?? 0;
     const lng = dbRecord.longitude ?? dbRecord.lng ?? 0;
     

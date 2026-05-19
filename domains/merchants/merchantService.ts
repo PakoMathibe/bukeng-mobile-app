@@ -23,13 +23,12 @@ export class MerchantService {
   }
 
   /**
-   * Get nearby merchants within radius (using latitude/longitude columns)
+   * Get nearby merchants within radius
    */
   static async getNearbyMerchants(
     location: GeoLocation,
     radius: number = 5
   ): Promise<NearbyMerchantResponse> {
-    // Calculate bounding box - using latitude/longitude columns
     const latDelta = radius / 111;
     const lngDelta = radius / (111 * Math.cos(location.lat * Math.PI / 180));
     
@@ -37,10 +36,10 @@ export class MerchantService {
       .from('merchants')
       .select('*')
       .eq('status', 'active')
-      .gte('latitude', location.lat - latDelta)  // Changed from 'lat' to 'latitude'
-      .lte('latitude', location.lat + latDelta)  // Changed from 'lat' to 'latitude'
-      .gte('longitude', location.lng - lngDelta) // Changed from 'lng' to 'longitude'
-      .lte('longitude', location.lng + lngDelta) // Changed from 'lng' to 'longitude'
+      .gte('latitude', location.lat - latDelta)   // Changed from 'lat' to 'latitude'
+      .lte('latitude', location.lat + latDelta)   // Changed from 'lat' to 'latitude'
+      .gte('longitude', location.lng - lngDelta)  // Changed from 'lng' to 'longitude'
+      .lte('longitude', location.lng + lngDelta)  // Changed from 'lng' to 'longitude'
       .order('rating', { ascending: false });
     
     if (error) {
@@ -48,15 +47,14 @@ export class MerchantService {
       throw new Error('Failed to fetch merchants');
     }
     
-    // Calculate distances and map to camelCase
     const merchantsWithDistance = (merchants || [])
       .map(merchant => ({
         ...mapToMerchant(merchant),
         distance: this.calculateDistance(
           location.lat,
           location.lng,
-          merchant.latitude,  // Changed from merchant.lat to merchant.latitude
-          merchant.longitude  // Changed from merchant.lng to merchant.longitude
+          merchant.latitude,   // Changed from merchant.lat
+          merchant.longitude   // Changed from merchant.lng
         ),
       }))
       .sort((a, b) => (a.distance || 0) - (b.distance || 0));
@@ -121,7 +119,6 @@ export class MerchantService {
     
     let merchants = (data || []).map(mapToMerchant);
     
-    // Calculate distances if location provided
     if (location) {
       merchants = merchants.map(merchant => ({
         ...merchant,
@@ -198,7 +195,6 @@ export class MerchantService {
       throw new Error('Rating must be between 1 and 5');
     }
     
-    // Check if user already rated this merchant
     const { data: existing, error: checkError } = await supabase
       .from('merchant_ratings')
       .select('id')
@@ -214,7 +210,6 @@ export class MerchantService {
       throw new Error('You have already rated this merchant');
     }
     
-    // Insert rating
     const { data, error } = await supabase
       .from('merchant_ratings')
       .insert({
@@ -231,7 +226,6 @@ export class MerchantService {
       throw new Error('Failed to submit rating');
     }
     
-    // Update merchant average rating (non-blocking)
     this.updateMerchantAverageRating(merchantId).catch(err => {
       console.error('Failed to update merchant average rating:', err);
     });
