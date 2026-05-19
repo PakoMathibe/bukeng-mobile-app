@@ -41,11 +41,16 @@ import {
   
   /**
    * Converts database merchants record (snake_case) to frontend Merchant type (camelCase)
+   * Handles both 'latitude/longitude' and 'lat/lng' column names for compatibility
    */
   export function mapToMerchant(dbRecord: any): Merchant {
+    // Support both column naming conventions
+    const lat = dbRecord.latitude ?? dbRecord.lat ?? 0;
+    const lng = dbRecord.longitude ?? dbRecord.lng ?? 0;
+    
     const location: GeoLocation = {
-      lat: dbRecord.latitude ?? dbRecord.lat ?? 0,
-      lng: dbRecord.longitude ?? dbRecord.lng ?? 0,
+      lat,
+      lng,
       formattedAddress: dbRecord.formatted_address ?? dbRecord.address ?? '',
       placeId: dbRecord.place_id ?? '',
     };

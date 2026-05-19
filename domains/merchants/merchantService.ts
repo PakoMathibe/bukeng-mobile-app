@@ -23,12 +23,13 @@ export class MerchantService {
   }
 
   /**
-   * Get nearby merchants within radius
+   * Get nearby merchants within radius (using latitude/longitude columns)
    */
   static async getNearbyMerchants(
     location: GeoLocation,
     radius: number = 5
   ): Promise<NearbyMerchantResponse> {
+    // Calculate bounding box - using latitude/longitude columns
     const latDelta = radius / 111;
     const lngDelta = radius / (111 * Math.cos(location.lat * Math.PI / 180));
     
@@ -36,10 +37,10 @@ export class MerchantService {
       .from('merchants')
       .select('*')
       .eq('status', 'active')
-      .gte('lat', location.lat - latDelta)
-      .lte('lat', location.lat + latDelta)
-      .gte('lng', location.lng - lngDelta)
-      .lte('lng', location.lng + lngDelta)
+      .gte('latitude', location.lat - latDelta)  // Changed from 'lat' to 'latitude'
+      .lte('latitude', location.lat + latDelta)  // Changed from 'lat' to 'latitude'
+      .gte('longitude', location.lng - lngDelta) // Changed from 'lng' to 'longitude'
+      .lte('longitude', location.lng + lngDelta) // Changed from 'lng' to 'longitude'
       .order('rating', { ascending: false });
     
     if (error) {
@@ -54,8 +55,8 @@ export class MerchantService {
         distance: this.calculateDistance(
           location.lat,
           location.lng,
-          merchant.lat,
-          merchant.lng
+          merchant.latitude,  // Changed from merchant.lat to merchant.latitude
+          merchant.longitude  // Changed from merchant.lng to merchant.longitude
         ),
       }))
       .sort((a, b) => (a.distance || 0) - (b.distance || 0));
@@ -76,7 +77,7 @@ export class MerchantService {
       .from('merchants')
       .select('*')
       .eq('id', id)
-      .single();
+      .maybeSingle();
     
     if (error) {
       if (error.code === 'PGRST116') return null;
@@ -84,7 +85,7 @@ export class MerchantService {
       throw new Error('Failed to fetch merchant');
     }
     
-    return mapToMerchant(data);
+    return data ? mapToMerchant(data) : null;
   }
   
   /**
@@ -105,10 +106,10 @@ export class MerchantService {
       const latDelta = radius / 111;
       const lngDelta = radius / (111 * Math.cos(location.lat * Math.PI / 180));
       supabaseQuery = supabaseQuery
-        .gte('lat', location.lat - latDelta)
-        .lte('lat', location.lat + latDelta)
-        .gte('lng', location.lng - lngDelta)
-        .lte('lng', location.lng + lngDelta);
+        .gte('latitude', location.lat - latDelta)
+        .lte('latitude', location.lat + latDelta)
+        .gte('longitude', location.lng - lngDelta)
+        .lte('longitude', location.lng + lngDelta);
     }
     
     const { data, error } = await supabaseQuery;
@@ -137,7 +138,7 @@ export class MerchantService {
   }
   
   /**
-   * Get merchants by category/type
+   * Get merchants by type/category
    */
   static async getMerchantsByType(
     businessType: string,
@@ -154,10 +155,10 @@ export class MerchantService {
       const latDelta = radius / 111;
       const lngDelta = radius / (111 * Math.cos(location.lat * Math.PI / 180));
       supabaseQuery = supabaseQuery
-        .gte('lat', location.lat - latDelta)
-        .lte('lat', location.lat + latDelta)
-        .gte('lng', location.lng - lngDelta)
-        .lte('lng', location.lng + lngDelta);
+        .gte('latitude', location.lat - latDelta)
+        .lte('latitude', location.lat + latDelta)
+        .gte('longitude', location.lng - lngDelta)
+        .lte('longitude', location.lng + lngDelta);
     }
     
     const { data, error } = await supabaseQuery;
@@ -193,7 +194,6 @@ export class MerchantService {
     rating: number,
     comment?: string
   ): Promise<MerchantRating> {
-    // Validate rating
     if (rating < 1 || rating > 5) {
       throw new Error('Rating must be between 1 and 5');
     }
@@ -224,7 +224,7 @@ export class MerchantService {
         comment: comment || null,
       })
       .select()
-      .single();
+      .maybeSingle();
     
     if (error) {
       console.error('Failed to submit rating:', error);
@@ -239,21 +239,6 @@ export class MerchantService {
     return mapToMerchantRating(data);
   }
   
-  static async getAllMerchants(): Promise<Merchant[]> {
-    const { data, error } = await supabase
-      .from('merchants')
-      .select('*')
-      .eq('status', 'active')
-      .order('rating', { ascending: false });
-  
-    if (error) {
-      console.error('Failed to fetch merchants:', error);
-      return [];
-    }
-  
-    return (data || []).map(mapToMerchant);
-  }
-
   /**
    * Update merchant's average rating and review count
    */
@@ -309,7 +294,7 @@ export class MerchantService {
     lat2: number,
     lon2: number
   ): number {
-    const R = 6371; // Earth's radius in km
+    const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
