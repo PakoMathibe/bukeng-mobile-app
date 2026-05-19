@@ -1,142 +1,191 @@
-// app/page.tsx
+// app/(dashboard)/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import {
-  ShoppingBag,
-  Clock,
-  Shield,
-  Smartphone,
-  ChevronRight,
-} from 'lucide-react';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Wallet, TrendingUp, ShoppingBag, QrCode, Lock, Sparkles, ArrowRight, Clock, CheckCircle } from 'lucide-react';
+import { toast } from 'sonner';
+import { useDashboard } from '@/hooks/useDashboard';
+import { DashboardSkeleton } from '@/components/dashboard/DashboardSkeleton';
+import { BankUploadPrompt } from '@/components/dashboard/BankUploadPrompt';
+import { PaymentPrompt } from '@/components/dashboard/PaymentPrompt';
 
-export default function HomePage() {
-  const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => setScrolled(window.scrollY > 50);
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
+// Tier 0 Explorer View Component
+function ExplorerDashboard() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-teal-50 via-white to-amber-50">
-      {/* Hero Section */}
-      <div className="relative px-5 pt-12 pb-8">
-        <div className="text-center">
-          <h1 className="text-5xl font-bold mb-3 bg-gradient-to-r from-teal-600 to-teal-800 bg-clip-text text-transparent">
-            Bukeng
-          </h1>
-          <p className="text-xl text-gray-700 mb-2">
-            "Because Food Can't Wait."
-          </p>
-          <p className="text-gray-600 text-sm mb-8 max-w-xs mx-auto">
-            Africa's first Buy Now Pay Later platform built exclusively for
-            food.
-          </p>
-
-          <div className="flex gap-3 justify-center">
-            <Link href="/auth/register" className="btn-primary text-base">
-              Get Started
-            </Link>
-            <Link href="/auth/login" className="btn-secondary text-base">
-              Sign In
-            </Link>
-          </div>
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-3 mt-10 max-w-xs mx-auto">
-          <div className="text-center bg-white/60 backdrop-blur-sm rounded-xl py-3">
-            <div className="text-2xl font-bold text-teal-600">60s</div>
-            <div className="text-xs text-gray-600">Approval</div>
-          </div>
-          <div className="text-center bg-white/60 backdrop-blur-sm rounded-xl py-3">
-            <div className="text-2xl font-bold text-teal-600">0%</div>
-            <div className="text-xs text-gray-600">Interest</div>
-          </div>
-          <div className="text-center bg-white/60 backdrop-blur-sm rounded-xl py-3">
-            <div className="text-2xl font-bold text-teal-600">R500+</div>
-            <div className="text-xs text-gray-600">Credit</div>
-          </div>
-        </div>
+    <div className="space-y-5 pb-20">
+      <div className="bg-gradient-to-r from-teal-500 to-teal-600 rounded-2xl p-5 text-white">
+        <h1 className="text-xl font-bold mb-2">Welcome to Bukeng!</h1>
+        <p className="text-teal-100 text-sm mb-4">
+          You're in Explorer mode. See how Bukeng works before committing.
+        </p>
+        <Link href="/onboarding/start">
+          <Button variant="outline" className="bg-white text-teal-600 border-white">
+            <Sparkles className="w-4 h-4 mr-2" />
+            Complete Verification
+          </Button>
+        </Link>
       </div>
 
-      {/* Features */}
-      <div className="bg-white rounded-t-3xl px-5 py-8 mt-4">
-        <h2 className="text-xl font-bold text-center text-gray-900 mb-6">
-          How It Works
-        </h2>
-        <div className="space-y-4">
-          {[
-            {
-              icon: Smartphone,
-              title: 'Download App',
-              desc: 'Get Bukeng from app store',
-              step: '1',
-            },
-            {
-              icon: Shield,
-              title: 'Verify Identity',
-              desc: 'SA ID + selfie in 60 seconds',
-              step: '2',
-            },
-            {
-              icon: Clock,
-              title: 'Instant Approval',
-              desc: 'Credit decision in seconds',
-              step: '3',
-            },
-            {
-              icon: ShoppingBag,
-              title: 'Shop & Pay',
-              desc: 'Scan QR code at checkout',
-              step: '4',
-            },
-          ].map((item) => (
-            <div
-              key={item.step}
-              className="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 transition"
-            >
-              <div className="w-12 h-12 bg-teal-100 rounded-full flex items-center justify-center">
-                <item.icon className="w-6 h-6 text-teal-600" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-teal-600">
-                    Step {item.step}
-                  </span>
-                  <h3 className="font-semibold text-gray-900">{item.title}</h3>
-                </div>
-                <p className="text-sm text-gray-500">{item.desc}</p>
-              </div>
-              <ChevronRight className="w-5 h-5 text-gray-400" />
+      <Card className="p-5 text-center">
+        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <Lock className="w-8 h-8 text-amber-600" />
+        </div>
+        <h2 className="text-lg font-bold text-gray-900 mb-2">Unlock Full Features</h2>
+        <p className="text-gray-600 text-sm mb-4">
+          Complete verification to get real credit and start shopping.
+        </p>
+        <div className="space-y-2 text-left mb-4">
+          {['Get up to R5,000 credit limit', 'Pay in 3 interest-free instalments', 'Shop at hundreds of partner stores'].map((feature, idx) => (
+            <div key={idx} className="flex items-center gap-2 text-sm text-gray-600">
+              <CheckCircle className="w-4 h-4 text-green-500" />
+              <span>{feature}</span>
             </div>
           ))}
         </div>
-      </div>
-
-      {/* CTA */}
-      <div className="px-5 py-8">
-        <div className="bg-gradient-to-r from-teal-600 to-teal-700 rounded-2xl p-6 text-center">
-          <h2 className="text-xl font-bold text-white mb-2">
-            Ready to get started?
-          </h2>
-          <p className="text-teal-100 text-sm mb-4">
-            Join thousands of happy customers
-          </p>
-          <Link
-            href="/auth/register"
-            className="inline-block bg-white text-teal-600 px-6 py-3 rounded-xl font-semibold shadow-lg"
-          >
-            Create Free Account
-          </Link>
-        </div>
-      </div>
-
-      {/* Bottom padding for safe area */}
-      <div className="h-20" />
+        <Link href="/onboarding/start">
+          <Button variant="primary" fullWidth>
+            Complete Verification
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        </Link>
+      </Card>
     </div>
+  );
+}
+
+// Tier 1+ Verified Dashboard Component
+interface VerifiedDashboardProps {
+  tierName: string;
+  totalLimit: number;
+  availableCredit: number;
+  usedCredit: number;
+  utilization: number;
+  onTimePayments: number;
+  showBankUploadPrompt: boolean;
+  showPaymentPrompt: boolean;
+  paymentsNeededForUpgrade: number;
+}
+
+function VerifiedDashboard({
+  tierName,
+  totalLimit,
+  availableCredit,
+  usedCredit,
+  utilization,
+  showBankUploadPrompt,
+  showPaymentPrompt,
+  paymentsNeededForUpgrade,
+}: VerifiedDashboardProps) {
+  return (
+    <div className="space-y-5 pb-20">
+      {/* Welcome Banner */}
+      <div className="bg-gradient-to-r from-teal-500 to-teal-600 rounded-2xl p-5 text-white">
+        <h1 className="text-xl font-bold mb-1">Welcome back!</h1>
+        <p className="text-teal-100 text-sm mb-4">
+          {tierName} Member • Credit limit: R{totalLimit.toLocaleString()}
+        </p>
+        <Button 
+          onClick={() => toast.info('QR Scanner would open here')} 
+          variant="outline" 
+          className="bg-white text-teal-600 border-white"
+        >
+          <QrCode className="w-4 h-4 mr-2" />
+          Scan QR Code
+        </Button>
+      </div>
+      
+      {/* Credit Stats */}
+      <div className="grid grid-cols-2 gap-3">
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Wallet className="w-5 h-5 text-teal-600" />
+            <span className="text-sm text-gray-500">Available</span>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">R{availableCredit.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mt-1">of R{totalLimit.toLocaleString()} limit</p>
+        </Card>
+        
+        <Card className="p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <TrendingUp className="w-5 h-5 text-teal-600" />
+            <span className="text-sm text-gray-500">Used</span>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">R{usedCredit.toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mt-1">{Math.round(utilization)}% of limit</p>
+        </Card>
+      </div>
+      
+      {/* Credit Utilization */}
+      <Card className="p-5">
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="font-semibold text-gray-900">Credit Utilization</h3>
+          <span className="text-sm text-gray-500">{Math.round(utilization)}% used</span>
+        </div>
+        <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div 
+            className={`h-full rounded-full transition-all ${
+              utilization > 80 ? 'bg-red-500' : utilization > 50 ? 'bg-yellow-500' : 'bg-teal-600'
+            }`}
+            style={{ width: `${Math.min(utilization, 100)}%` }}
+          />
+        </div>
+        <p className="text-xs text-gray-500 mt-3">
+          {utilization > 80 
+            ? 'Consider making a repayment to free up credit' 
+            : utilization > 50 
+            ? 'Good utilization - Keep it up!' 
+            : 'You have plenty of credit available'}
+        </p>
+      </Card>
+      
+      {/* Quick Actions */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link href="/dashboard/merchants">
+          <Card className="p-4 text-center hover:shadow-md transition cursor-pointer">
+            <ShoppingBag className="w-6 h-6 text-teal-600 mx-auto mb-2" />
+            <span className="text-sm font-medium">Find Stores</span>
+          </Card>
+        </Link>
+        <Link href="/dashboard/repayments">
+          <Card className="p-4 text-center hover:shadow-md transition cursor-pointer">
+            <Clock className="w-6 h-6 text-teal-600 mx-auto mb-2" />
+            <span className="text-sm font-medium">Repayments</span>
+          </Card>
+        </Link>
+      </div>
+      
+      {/* Upgrade Prompts */}
+      {showBankUploadPrompt && <BankUploadPrompt />}
+      {showPaymentPrompt && <PaymentPrompt paymentsNeeded={paymentsNeededForUpgrade} />}
+    </div>
+  );
+}
+
+// Main Dashboard Component
+export default function DashboardPage() {
+  const dashboardData = useDashboard();
+
+  if (dashboardData.isLoading) {
+    return <DashboardSkeleton />;
+  }
+
+  if (dashboardData.tier === 0) {
+    return <ExplorerDashboard />;
+  }
+
+  return (
+    <VerifiedDashboard
+      tierName={dashboardData.tierName}
+      totalLimit={dashboardData.totalLimit}
+      availableCredit={dashboardData.availableCredit}
+      usedCredit={dashboardData.usedCredit}
+      utilization={dashboardData.utilization}
+      onTimePayments={dashboardData.onTimePayments}
+      showBankUploadPrompt={dashboardData.showBankUploadPrompt}
+      showPaymentPrompt={dashboardData.showPaymentPrompt}
+      paymentsNeededForUpgrade={dashboardData.paymentsNeededForUpgrade}
+    />
   );
 }

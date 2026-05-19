@@ -20,7 +20,7 @@ export default function LoginPage() {
     setError('');
     try {
       await login(email, password);
-      router.push('/dashboard');
+      // No need to redirect here - login function handles it
     } catch (err: any) {
       setError(err.message || 'Login failed');
     }
@@ -80,7 +80,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-6 rounded-xl transition-all"
+            className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-6 rounded-xl transition-all disabled:opacity-50"
             disabled={isLoading}
           >
             {isLoading ? 'Signing in...' : 'Sign In'}

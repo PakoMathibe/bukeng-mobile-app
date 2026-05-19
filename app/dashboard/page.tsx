@@ -3,6 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
+import { useCreditStore } from '@/store/creditStore';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Wallet, TrendingUp, ShoppingBag, QrCode, Lock, Sparkles, ArrowRight, Clock, CheckCircle } from 'lucide-react';
@@ -10,22 +11,87 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { TIER_LIMITS, TIER_CONFIGS } from '@/types/user';
 
+// Skeleton Loader Component
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-5 pb-20">
+      {/* Welcome Banner Skeleton */}
+      <div className="bg-gradient-to-r from-teal-500 to-teal-600 rounded-2xl p-5 animate-pulse">
+        <div className="h-6 bg-teal-400 rounded w-3/4 mb-2"></div>
+        <div className="h-4 bg-teal-400 rounded w-1/2 mb-4"></div>
+        <div className="h-10 bg-teal-400 rounded-xl w-32"></div>
+      </div>
+      
+      {/* Stats Skeleton */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white rounded-xl p-4 animate-pulse">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-5 h-5 bg-gray-200 rounded"></div>
+            <div className="h-4 bg-gray-200 rounded w-16"></div>
+          </div>
+          <div className="h-8 bg-gray-200 rounded w-24 mb-1"></div>
+          <div className="h-3 bg-gray-200 rounded w-20"></div>
+        </div>
+        <div className="bg-white rounded-xl p-4 animate-pulse">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-5 h-5 bg-gray-200 rounded"></div>
+            <div className="h-4 bg-gray-200 rounded w-16"></div>
+          </div>
+          <div className="h-8 bg-gray-200 rounded w-24 mb-1"></div>
+          <div className="h-3 bg-gray-200 rounded w-20"></div>
+        </div>
+      </div>
+      
+      {/* Credit Utilization Skeleton */}
+      <div className="bg-white rounded-xl p-5 animate-pulse">
+        <div className="flex justify-between items-center mb-3">
+          <div className="h-5 bg-gray-200 rounded w-32"></div>
+          <div className="h-4 bg-gray-200 rounded w-12"></div>
+        </div>
+        <div className="h-2 bg-gray-200 rounded-full"></div>
+        <div className="h-3 bg-gray-200 rounded w-48 mt-3"></div>
+      </div>
+      
+      {/* Quick Actions Skeleton */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white rounded-xl p-4 text-center animate-pulse">
+          <div className="w-6 h-6 bg-gray-200 rounded mx-auto mb-2"></div>
+          <div className="h-4 bg-gray-200 rounded w-20 mx-auto"></div>
+        </div>
+        <div className="bg-white rounded-xl p-4 text-center animate-pulse">
+          <div className="w-6 h-6 bg-gray-200 rounded mx-auto mb-2"></div>
+          <div className="h-4 bg-gray-200 rounded w-20 mx-auto"></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
-  const { user } = useAuthStore();
+  const { user, isLoading: authLoading } = useAuthStore();
+  const { summary, isLoading: creditLoading, refreshCredit } = useCreditStore();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (user) setLoading(false);
-  }, [user]);
+    const loadData = async () => {
+      if (user) {
+        await refreshCredit(user.id);
+      }
+      setLoading(false);
+    };
+    
+    if (user && !summary) {
+      loadData();
+    } else if (user && summary) {
+      setLoading(false);
+    } else if (!user && !authLoading) {
+      setLoading(false);
+    }
+  }, [user, summary, refreshCredit, authLoading]);
 
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <div className="h-32 bg-gray-200 rounded-2xl animate-pulse" />
-        <div className="h-24 bg-gray-200 rounded-xl animate-pulse" />
-        <div className="h-48 bg-gray-200 rounded-xl animate-pulse" />
-      </div>
-    );
+  // Show skeleton while loading
+  if (loading || authLoading || creditLoading) {
+    return <DashboardSkeleton />;
   }
 
   // TIER 0: Explorer Mode
@@ -90,13 +156,11 @@ export default function DashboardPage() {
   // TIER 1+: Full Dashboard
   const tier = user?.tier as 1 | 2 | 3;
   const tierInfo = TIER_LIMITS[tier] || TIER_LIMITS[1];
-  const totalLimit = user?.creditLimit || 0;
-  const availableCredit = user?.availableCredit || 0;
+  const totalLimit = summary?.totalLimit || user?.creditLimit || 0;
+  const availableCredit = summary?.availableCredit || user?.availableCredit || 0;
   const usedCredit = totalLimit - availableCredit;
   const utilization = totalLimit > 0 ? (usedCredit / totalLimit) * 100 : 0;
-
-  // Get on-time payments from user object or default to 0
-  const onTimePayments = user?.onTimePayments || 0;
+  const onTimePayments = summary?.onTimePayments || user?.onTimePayments || 0;
 
   return (
     <div className="space-y-5 pb-20">
@@ -143,7 +207,7 @@ export default function DashboardPage() {
             {user?.tier === 1 
               ? 'Verify bank for higher limit' 
               : user?.tier === 2 
-                ? `${3 - (onTimePayments % 3)} more payments to Premium` 
+                ? `${Math.max(0, 3 - (onTimePayments % 3))} more payments to Premium` 
                 : 'Premium member'}
           </p>
         </Card>

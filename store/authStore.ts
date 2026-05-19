@@ -8,7 +8,7 @@ interface AuthState {
   token: string | null;
   isLoading: boolean;
   error: string | null;
-  _hasHydrated: boolean;  // Track hydration state
+  _hasHydrated: boolean;
   
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
@@ -17,7 +17,7 @@ interface AuthState {
   logout: () => void;
   setHasHydrated: (state: boolean) => void;
   
-  // Selectors (computed values)
+  // Selector
   isAuthenticated: () => boolean;
 }
 
@@ -26,29 +26,24 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       user: null,
       token: null,
-      isLoading: false,
+      isLoading: true,
       error: null,
       _hasHydrated: false,
 
       setUser: (user) => set({ user }),
-      
       setToken: (token) => set({ token }),
-      
       setLoading: (isLoading) => set({ isLoading }),
-      
       setError: (error) => set({ error }),
       
       logout: () => {
-        // Clear cookie
         document.cookie = 'bukeng_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT';
-        // Clear localStorage (handled by persist middleware)
         set({ user: null, token: null, error: null });
       },
       
       setHasHydrated: (state) => set({ _hasHydrated: state }),
       
       isAuthenticated: () => {
-        return !!get().user && !!get().token;
+        return !!get().user;
       },
     }),
     {

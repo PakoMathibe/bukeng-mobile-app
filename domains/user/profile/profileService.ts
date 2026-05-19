@@ -1,11 +1,11 @@
 // domains/user/profile/profileService.ts
 import { supabase } from '@/services/supabase/client';
-import { uploadFile } from '@/services/firebase/client';
+import { mapToUser, mapToUserRecord } from '@/services/supabase/userMapper';
 import { User } from '@/types/user';
+import { uploadFile } from '@/services/firebase/client';
 import { AppError, NotFoundError, ValidationError } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { CONSTANTS } from '@/lib/constants';
-import { AuthService } from '@/domains/auth/authService';
 
 export interface ProfileUpdateData {
   fullName?: string;
@@ -35,18 +35,23 @@ export class ProfileService {
   /**
    * Get user profile
    */
-  static async getProfile(userId: string): Promise<User> {
+  static async getProfile(userId: string): Promise<User | null> {
     try {
-      const user = await AuthService.getUserById(userId);
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
 
-      if (!user) {
-        throw new NotFoundError(`User ${userId}`);
+      if (error || !data) {
+        logger.error('Failed to get profile:', error);
+        return null;
       }
 
-      return user;
+      return mapToUser(data);
     } catch (error) {
       logger.error('Failed to get profile', error);
-      throw error;
+      return null;
     }
   }
 
@@ -56,7 +61,7 @@ export class ProfileService {
   static async updateProfile(
     userId: string,
     data: ProfileUpdateData
-  ): Promise<User> {
+  ): Promise<User | null> {
     try {
       // Validate phone number if provided
       if (
@@ -71,22 +76,32 @@ export class ProfileService {
         throw new ValidationError('Invalid email format');
       }
 
-      const updateData: Partial<User> = {
-        fullName: data.fullName,
-        phoneNumber: data.phoneNumber,
-        updatedAt: new Date(),
-      };
+      const updateData: Record<string, unknown> = {};
+      if (data.fullName !== undefined) updateData.full_name = data.fullName;
+      if (data.phoneNumber !== undefined) updateData.phone_number = data.phoneNumber;
+      if (data.email !== undefined) updateData.email = data.email;
+      if (data.dateOfBirth !== undefined) updateData.date_of_birth = data.dateOfBirth;
+      updateData.updated_at = new Date().toISOString();
 
-      // If email is being updated, need to handle auth separately
-      if (data.email) {
-        updateData.email = data.email;
+      const { data: updated, error } = await supabase
+        .from('users')
+        .update(updateData)
+        .eq('id', userId)
+        .select()
+        .maybeSingle();
+
+      if (error) {
+        logger.error('Failed to update profile:', error);
+        throw new AppError('Failed to update profile', 'PROFILE_UPDATE_ERROR', 500);
       }
 
-      const user = await AuthService.updateUser(userId, updateData);
+      if (!updated) {
+        throw new NotFoundError(`User ${userId}`);
+      }
 
       logger.info(`Profile updated for user ${userId}`);
 
-      return user;
+      return mapToUser(updated);
     } catch (error) {
       logger.error('Failed to update profile', error);
       throw error;
@@ -151,7 +166,7 @@ export class ProfileService {
           status: 'pending',
         })
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
         logger.error('Failed to save KYC record:', error);
@@ -225,7 +240,7 @@ export class ProfileService {
     documentId: string,
     verified: boolean,
     rejectionReason?: string
-  ): Promise<KYCDocument> {
+  ): Promise<KYCDocument | null> {
     try {
       const { data, error } = await supabase
         .from('kyc_records')
@@ -236,20 +251,14 @@ export class ProfileService {
         })
         .eq('id', documentId)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) {
         logger.error('Failed to verify KYC document:', error);
         throw new AppError('Failed to verify document', 'KYC_VERIFY_ERROR', 500);
       }
 
-      // If ID document verified, update user's KYC status
-      if (verified && data.type === 'id_document') {
-        const user = await AuthService.getUserById(data.user_id);
-        if (user && user.kycStatus === 'pending') {
-          await AuthService.updateUser(data.user_id, { kycStatus: 'verified' });
-        }
-      }
+      if (!data) return null;
 
       return {
         id: data.id,

@@ -23,19 +23,29 @@ export class SyncEngine {
     let synced = 0;
     let failed = 0;
 
-    const pendingOperations = await offlineQueue.getPending();
+    try {
+      const pendingOperations = await offlineQueue.getPending();
 
-    for (const operation of pendingOperations) {
-      await offlineQueue.updateStatus(operation.id, 'processing');
-      
-      try {
-        const success = await this.executeOperation(operation);
+      for (const operation of pendingOperations) {
+        await offlineQueue.updateStatus(operation.id, 'processing');
         
-        if (success) {
-          await offlineQueue.remove(operation.id);
-          synced++;
-          logger.info(`Synced operation: ${operation.id}`);
-        } else {
+        try {
+          const success = await this.executeOperation(operation);
+          
+          if (success) {
+            await offlineQueue.remove(operation.id);
+            synced++;
+            logger.info(`Synced operation: ${operation.id}`);
+          } else {
+            const newRetryCount = operation.retryCount + 1;
+            if (newRetryCount >= operation.maxRetries) {
+              await offlineQueue.updateStatus(operation.id, 'failed', newRetryCount);
+              failed++;
+            } else {
+              await offlineQueue.updateStatus(operation.id, 'pending', newRetryCount);
+            }
+          }
+        } catch (error) {
           const newRetryCount = operation.retryCount + 1;
           if (newRetryCount >= operation.maxRetries) {
             await offlineQueue.updateStatus(operation.id, 'failed', newRetryCount);
@@ -43,25 +53,18 @@ export class SyncEngine {
           } else {
             await offlineQueue.updateStatus(operation.id, 'pending', newRetryCount);
           }
+          logger.error(`Sync failed for ${operation.id}`, error);
         }
-      } catch (error) {
-        const newRetryCount = operation.retryCount + 1;
-        if (newRetryCount >= operation.maxRetries) {
-          await offlineQueue.updateStatus(operation.id, 'failed', newRetryCount);
-          failed++;
-        } else {
-          await offlineQueue.updateStatus(operation.id, 'pending', newRetryCount);
-        }
-        logger.error(`Sync failed for ${operation.id}`, error);
       }
+    } finally {
+      this.isSyncing = false;
     }
 
-    this.isSyncing = false;
     return { synced, failed };
   }
 
   private async executeOperation(operation: QueuedOperation): Promise<boolean> {
-    const token = localStorage.getItem('auth_token');
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
       ...(token && { 'Authorization': `Bearer ${token}` }),

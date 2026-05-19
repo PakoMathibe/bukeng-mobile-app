@@ -18,9 +18,10 @@ class OfflineQueue {
   private static instance: OfflineQueue;
   private readonly DB_NAME = 'bukeng_offline_queue';
   private readonly DB_VERSION = 1;
+  private initPromise: Promise<void> | null = null;
 
   private constructor() {
-    this.init();
+    this.initPromise = this.init();
   }
 
   static getInstance(): OfflineQueue {
@@ -30,7 +31,7 @@ class OfflineQueue {
     return OfflineQueue.instance;
   }
 
-  private async init() {
+  private async init(): Promise<void> {
     this.db = await openDB(this.DB_NAME, this.DB_VERSION, {
       upgrade(db) {
         if (!db.objectStoreNames.contains('operations')) {
@@ -43,7 +44,19 @@ class OfflineQueue {
     });
   }
 
+  private async ensureDB(): Promise<IDBPDatabase> {
+    if (this.db) return this.db;
+    if (this.initPromise) {
+      await this.initPromise;
+    }
+    if (!this.db) {
+      await this.init();
+    }
+    return this.db!;
+  }
+
   async add(operation: Omit<QueuedOperation, 'id' | 'timestamp' | 'retryCount' | 'status'>): Promise<string> {
+    const db = await this.ensureDB();
     const id = crypto.randomUUID();
     const queueItem: QueuedOperation = {
       ...operation,
@@ -54,35 +67,40 @@ class OfflineQueue {
       status: 'pending',
     };
 
-    await this.db!.add('operations', queueItem);
+    await db.add('operations', queueItem);
     return id;
   }
 
   async getAll(): Promise<QueuedOperation[]> {
-    const items = await this.db!.getAll('operations');
+    const db = await this.ensureDB();
+    const items = await db.getAll('operations');
     return items.sort((a, b) => a.timestamp - b.timestamp);
   }
 
   async getPending(): Promise<QueuedOperation[]> {
-    const items = await this.db!.getAllFromIndex('operations', 'by_status', 'pending');
+    const db = await this.ensureDB();
+    const items = await db.getAllFromIndex('operations', 'by_status', 'pending');
     return items.sort((a, b) => a.timestamp - b.timestamp);
   }
 
   async updateStatus(id: string, status: QueuedOperation['status'], retryCount?: number): Promise<void> {
-    const item = await this.db!.get('operations', id);
+    const db = await this.ensureDB();
+    const item = await db.get('operations', id);
     if (item) {
       item.status = status;
       if (retryCount !== undefined) item.retryCount = retryCount;
-      await this.db!.put('operations', item);
+      await db.put('operations', item);
     }
   }
 
   async remove(id: string): Promise<void> {
-    await this.db!.delete('operations', id);
+    const db = await this.ensureDB();
+    await db.delete('operations', id);
   }
 
   async getCount(): Promise<number> {
-    const all = await this.db!.getAll('operations');
+    const db = await this.ensureDB();
+    const all = await db.getAll('operations');
     return all.length;
   }
 }

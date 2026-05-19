@@ -3,19 +3,22 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { syncEngine } from '@/modules/OfflineSync/syncEngine';
-import { offlineQueue } from '@/modules/OfflineSync/queue';
-import { useAuth } from './useAuth';
 import { useOnlineStatus } from './useOnlineStatus';
 
 export function useOfflineSync() {
-  const { user } = useAuth();
   const isOnline = useOnlineStatus();
   const [pendingCount, setPendingCount] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   const refreshPendingCount = useCallback(async () => {
-    const count = await syncEngine.getPendingCount();
-    setPendingCount(count);
+    try {
+      const count = await syncEngine.getPendingCount();
+      setPendingCount(count);
+    } catch (error) {
+      console.error('Failed to get pending count:', error);
+      setPendingCount(0);
+    }
   }, []);
 
   const performSync = useCallback(async () => {
@@ -31,22 +34,27 @@ export function useOfflineSync() {
     }
   }, [isOnline, isSyncing, refreshPendingCount]);
 
-  // Initial load - refresh pending count
+  // Initialize - refresh pending count when component mounts
   useEffect(() => {
-    refreshPendingCount();
+    const init = async () => {
+      await refreshPendingCount();
+      setIsInitialized(true);
+    };
+    init();
   }, [refreshPendingCount]);
 
   // Auto-sync when coming back online
   useEffect(() => {
-    if (isOnline && pendingCount > 0 && !isSyncing) {
+    if (isOnline && isInitialized && pendingCount > 0 && !isSyncing) {
       performSync();
     }
-  }, [isOnline, pendingCount, isSyncing, performSync]);
+  }, [isOnline, isInitialized, pendingCount, isSyncing, performSync]);
 
   return {
     pendingCount,
     isSyncing,
     performSync,
     refreshPendingCount,
+    isInitialized,
   };
 }

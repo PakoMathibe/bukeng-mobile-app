@@ -5,6 +5,61 @@ import { CreditProfile, CreditSummary, CreditHistory } from '@/types/credit';
 import { User } from '@/types/user';
 
 export class CreditService {
+
+  // domains/credit/creditService.ts - Add this method
+static async getDashboardData(userId: string): Promise<{
+  tier: number;
+  tierName: string;
+  totalLimit: number;
+  availableCredit: number;
+  usedCredit: number;
+  utilization: number;
+  onTimePayments: number;
+  nextUpgradeRequirement: string;
+  showBankUploadPrompt: boolean;
+  showPaymentPrompt: boolean;
+  paymentsNeededForUpgrade: number;
+}> {
+  const profile = await this.getOrCreateCreditProfile(userId);
+  const user = await AuthService.getUserById(userId);
+  
+  const totalLimit = profile.creditLimit;
+  const availableCredit = profile.availableCredit;
+  const usedCredit = profile.usedCredit;
+  const utilization = totalLimit > 0 ? (usedCredit / totalLimit) * 100 : 0;
+  const onTimePayments = profile.onTimePayments;
+  
+  const tier = user?.tier || 0;
+  const tierConfig = TIER_CONFIGS[tier as UserTier];
+  
+  let showBankUploadPrompt = false;
+  let showPaymentPrompt = false;
+  let paymentsNeededForUpgrade = 0;
+  let nextUpgradeRequirement = '';
+  
+  if (tier === 1) {
+    showBankUploadPrompt = true;
+    nextUpgradeRequirement = 'Upload bank statement to reach Trusted tier';
+  } else if (tier === 2) {
+    paymentsNeededForUpgrade = Math.max(0, 6 - onTimePayments);
+    showPaymentPrompt = paymentsNeededForUpgrade > 0;
+    nextUpgradeRequirement = `${paymentsNeededForUpgrade} more on-time payments to reach Premium`;
+  }
+  
+  return {
+    tier,
+    tierName: tierConfig?.name || 'Explorer',
+    totalLimit,
+    availableCredit,
+    usedCredit,
+    utilization,
+    onTimePayments,
+    nextUpgradeRequirement,
+    showBankUploadPrompt,
+    showPaymentPrompt,
+    paymentsNeededForUpgrade,
+  };
+}
   /**
    * Get credit profile for a user
    */
@@ -56,7 +111,7 @@ export class CreditService {
       .from('credit_profiles')
       .insert(defaultProfile)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error('Failed to create credit profile:', error);
@@ -96,7 +151,7 @@ export class CreditService {
       .update(dbRecord)
       .eq('user_id', userId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error('Failed to update credit profile:', error);
@@ -283,7 +338,7 @@ export class CreditService {
       .update(dbRecord)
       .eq('user_id', userId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error('Failed to apply limit increase:', error);
@@ -372,26 +427,32 @@ export class CreditService {
   }
 
   /**
-   * Update available credit after purchase or repayment
+   * Update available credit after purchase
    */
-  static async updateAvailableCredit(userId: string, amount: number): Promise<void> {
-    const profile = await this.getOrCreateCreditProfile(userId);
-    
-    const newAvailableCredit = Math.max(0, profile.availableCredit - amount);
-    const newUsedCredit = profile.usedCredit + amount;
+  static async updateAvailableCredit(userId: string, amount: number): Promise<boolean> {
+    try {
+      const profile = await this.getOrCreateCreditProfile(userId);
+      
+      const newAvailable = Math.max(0, profile.availableCredit - amount);
+      const newUsed = profile.usedCredit + amount;
 
-    const { error } = await supabase
-      .from('credit_profiles')
-      .update({
-        available_credit: newAvailableCredit,
-        used_credit: newUsedCredit,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', userId);
+      const { error } = await supabase
+        .from('credit_profiles')
+        .update({
+          available_credit: newAvailable,
+          used_credit: newUsed,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId);
 
-    if (error) {
-      console.error('Failed to update available credit:', error);
-      throw new Error('Failed to update credit');
+      if (error) {
+        console.error('Failed to update available credit:', error);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('Update available credit error:', error);
+      return false;
     }
   }
 
@@ -402,32 +463,39 @@ export class CreditService {
     userId: string,
     amount: number,
     onTime: boolean
-  ): Promise<void> {
-    const profile = await this.getOrCreateCreditProfile(userId);
-    
-    const updates: any = {
-      available_credit: profile.availableCredit + amount,
-      used_credit: Math.max(0, profile.usedCredit - amount),
-      updated_at: new Date().toISOString(),
-    };
+  ): Promise<boolean> {
+    try {
+      const profile = await this.getOrCreateCreditProfile(userId);
+      
+      const updates: any = {
+        available_credit: profile.availableCredit + amount,
+        used_credit: Math.max(0, profile.usedCredit - amount),
+        updated_at: new Date().toISOString(),
+      };
 
-    if (onTime) {
-      updates.on_time_payments = profile.onTimePayments + 1;
-    } else {
-      updates.late_payments = profile.latePayments + 1;
+      if (onTime) {
+        updates.on_time_payments = profile.onTimePayments + 1;
+      } else {
+        updates.late_payments = profile.latePayments + 1;
+      }
+
+      const { error } = await supabase
+        .from('credit_profiles')
+        .update(updates)
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('Failed to update after payment:', error);
+        return false;
+      }
+
+      // Also update credit score
+      await this.updateCreditScore(userId);
+      
+      return true;
+    } catch (error) {
+      console.error('Update after payment error:', error);
+      return false;
     }
-
-    const { error } = await supabase
-      .from('credit_profiles')
-      .update(updates)
-      .eq('user_id', userId);
-
-    if (error) {
-      console.error('Failed to update after payment:', error);
-      throw new Error('Failed to update credit');
-    }
-
-    // Also update credit score
-    await this.updateCreditScore(userId);
   }
 }

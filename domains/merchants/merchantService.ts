@@ -239,6 +239,21 @@ export class MerchantService {
     return mapToMerchantRating(data);
   }
   
+  static async getAllMerchants(): Promise<Merchant[]> {
+    const { data, error } = await supabase
+      .from('merchants')
+      .select('*')
+      .eq('status', 'active')
+      .order('rating', { ascending: false });
+  
+    if (error) {
+      console.error('Failed to fetch merchants:', error);
+      return [];
+    }
+  
+    return (data || []).map(mapToMerchant);
+  }
+
   /**
    * Update merchant's average rating and review count
    */
