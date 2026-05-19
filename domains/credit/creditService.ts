@@ -13,7 +13,7 @@ export class CreditService {
       .from('credit_profiles')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (error && error.code !== 'PGRST116') {
       console.error('Failed to fetch credit profile:', error);
@@ -181,6 +181,7 @@ export class CreditService {
       };
     }
 
+    // Lower credit score limits high-value transactions
     if (profile.creditScore < 600 && amount > 1000) {
       return {
         affordable: false,
@@ -368,5 +369,65 @@ export class CreditService {
     if (!existing) {
       await this.createDefaultCreditProfile(user.id);
     }
+  }
+
+  /**
+   * Update available credit after purchase or repayment
+   */
+  static async updateAvailableCredit(userId: string, amount: number): Promise<void> {
+    const profile = await this.getOrCreateCreditProfile(userId);
+    
+    const newAvailableCredit = Math.max(0, profile.availableCredit - amount);
+    const newUsedCredit = profile.usedCredit + amount;
+
+    const { error } = await supabase
+      .from('credit_profiles')
+      .update({
+        available_credit: newAvailableCredit,
+        used_credit: newUsedCredit,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Failed to update available credit:', error);
+      throw new Error('Failed to update credit');
+    }
+  }
+
+  /**
+   * Update after payment (increment on-time payment count)
+   */
+  static async updateAfterPayment(
+    userId: string,
+    amount: number,
+    onTime: boolean
+  ): Promise<void> {
+    const profile = await this.getOrCreateCreditProfile(userId);
+    
+    const updates: any = {
+      available_credit: profile.availableCredit + amount,
+      used_credit: Math.max(0, profile.usedCredit - amount),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (onTime) {
+      updates.on_time_payments = profile.onTimePayments + 1;
+    } else {
+      updates.late_payments = profile.latePayments + 1;
+    }
+
+    const { error } = await supabase
+      .from('credit_profiles')
+      .update(updates)
+      .eq('user_id', userId);
+
+    if (error) {
+      console.error('Failed to update after payment:', error);
+      throw new Error('Failed to update credit');
+    }
+
+    // Also update credit score
+    await this.updateCreditScore(userId);
   }
 }

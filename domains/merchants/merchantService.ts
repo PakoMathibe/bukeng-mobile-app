@@ -5,6 +5,24 @@ import { mapToMerchant, mapToMerchantRating } from '@/services/supabase/merchant
 
 export class MerchantService {
   /**
+   * Get all active merchants
+   */
+  static async getAllMerchants(): Promise<Merchant[]> {
+    const { data, error } = await supabase
+      .from('merchants')
+      .select('*')
+      .eq('status', 'active')
+      .order('rating', { ascending: false });
+
+    if (error) {
+      console.error('Failed to fetch all merchants:', error);
+      return [];
+    }
+
+    return (data || []).map(mapToMerchant);
+  }
+
+  /**
    * Get nearby merchants within radius
    */
   static async getNearbyMerchants(
