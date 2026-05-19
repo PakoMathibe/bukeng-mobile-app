@@ -1,7 +1,9 @@
 // hooks/useOfflineSync.ts
+'use client';
+
 import { useEffect, useState, useCallback } from 'react';
 import { syncEngine } from '@/modules/OfflineSync/syncEngine';
-import { OfflineQueue } from '@/modules/OfflineSync/queue';
+import { offlineQueue } from '@/modules/OfflineSync/queue';
 import { useAuth } from './useAuth';
 import { useOnlineStatus } from './useOnlineStatus';
 
@@ -12,12 +14,12 @@ export function useOfflineSync() {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const refreshPendingCount = useCallback(async () => {
-    const count = await OfflineQueue.getPendingCount();
+    const count = await syncEngine.getPendingCount();
     setPendingCount(count);
   }, []);
 
   const performSync = useCallback(async () => {
-    if (!isOnline || isSyncing) return;
+    if (!isOnline || isSyncing) return { synced: 0, failed: 0 };
 
     setIsSyncing(true);
     try {
@@ -29,10 +31,12 @@ export function useOfflineSync() {
     }
   }, [isOnline, isSyncing, refreshPendingCount]);
 
+  // Initial load - refresh pending count
   useEffect(() => {
     refreshPendingCount();
   }, [refreshPendingCount]);
 
+  // Auto-sync when coming back online
   useEffect(() => {
     if (isOnline && pendingCount > 0 && !isSyncing) {
       performSync();

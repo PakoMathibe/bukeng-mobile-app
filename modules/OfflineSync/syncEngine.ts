@@ -1,10 +1,18 @@
 // modules/OfflineSync/syncEngine.ts
-import { OfflineQueue, QueuedTransaction } from './queue';
+import { offlineQueue, QueuedOperation } from './queue';
 import { supabase } from '@/services/supabase/client';
 import { logger } from '@/lib/logger';
 
 export class SyncEngine {
+  private static instance: SyncEngine;
   private isSyncing = false;
+
+  static getInstance(): SyncEngine {
+    if (!SyncEngine.instance) {
+      SyncEngine.instance = new SyncEngine();
+    }
+    return SyncEngine.instance;
+  }
 
   async sync(): Promise<{ synced: number; failed: number }> {
     if (this.isSyncing) {
@@ -15,126 +23,68 @@ export class SyncEngine {
     let synced = 0;
     let failed = 0;
 
-    try {
-      const pendingTransactions = await OfflineQueue.getAllPending();
+    const pendingOperations = await offlineQueue.getPending();
 
-      for (const transaction of pendingTransactions) {
-        await OfflineQueue.updateStatus(transaction.id!, 'processing');
-
-        try {
-          let success = false;
-
-          switch (transaction.type) {
-            case 'payment':
-              success = await this.syncPayment(transaction);
-              break;
-            case 'repayment':
-              success = await this.syncRepayment(transaction);
-              break;
-            case 'kyc':
-              success = await this.syncKYC(transaction);
-              break;
-          }
-
-          if (success) {
-            await OfflineQueue.remove(transaction.id!);
-            synced++;
-          } else {
-            const newRetryCount = (transaction.retryCount || 0) + 1;
-            if (newRetryCount >= 5) {
-              await OfflineQueue.updateStatus(
-                transaction.id!,
-                'failed',
-                newRetryCount
-              );
-              failed++;
-            } else {
-              await OfflineQueue.updateStatus(
-                transaction.id!,
-                'pending',
-                newRetryCount
-              );
-            }
-          }
-        } catch (error) {
-          logger.error(`Sync failed for transaction ${transaction.id}`, error);
-          const newRetryCount = (transaction.retryCount || 0) + 1;
-          if (newRetryCount >= 5) {
-            await OfflineQueue.updateStatus(
-              transaction.id!,
-              'failed',
-              newRetryCount
-            );
+    for (const operation of pendingOperations) {
+      await offlineQueue.updateStatus(operation.id, 'processing');
+      
+      try {
+        const success = await this.executeOperation(operation);
+        
+        if (success) {
+          await offlineQueue.remove(operation.id);
+          synced++;
+          logger.info(`Synced operation: ${operation.id}`);
+        } else {
+          const newRetryCount = operation.retryCount + 1;
+          if (newRetryCount >= operation.maxRetries) {
+            await offlineQueue.updateStatus(operation.id, 'failed', newRetryCount);
             failed++;
           } else {
-            await OfflineQueue.updateStatus(
-              transaction.id!,
-              'pending',
-              newRetryCount
-            );
+            await offlineQueue.updateStatus(operation.id, 'pending', newRetryCount);
           }
         }
+      } catch (error) {
+        const newRetryCount = operation.retryCount + 1;
+        if (newRetryCount >= operation.maxRetries) {
+          await offlineQueue.updateStatus(operation.id, 'failed', newRetryCount);
+          failed++;
+        } else {
+          await offlineQueue.updateStatus(operation.id, 'pending', newRetryCount);
+        }
+        logger.error(`Sync failed for ${operation.id}`, error);
       }
-    } finally {
-      this.isSyncing = false;
     }
 
+    this.isSyncing = false;
     return { synced, failed };
   }
 
-  private async syncPayment(transaction: QueuedTransaction): Promise<boolean> {
-    const { data, error } = await supabase
-      .from('payments')
-      .insert({
-        user_id: transaction.userId,
-        order_id: transaction.data.orderId,
-        amount: transaction.data.amount,
-        status: 'pending',
-        payment_method: transaction.data.paymentMethod,
-      })
-      .select()
-      .single();
+  private async executeOperation(operation: QueuedOperation): Promise<boolean> {
+    const token = localStorage.getItem('auth_token');
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+    };
 
-    if (error) throw error;
-    return true;
+    const url = `/api${operation.endpoint}`;
+    const options: RequestInit = {
+      method: operation.type === 'create' ? 'POST' : operation.type === 'update' ? 'PUT' : 'DELETE',
+      headers,
+      body: JSON.stringify(operation.data),
+    };
+
+    try {
+      const response = await fetch(url, options);
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
   }
 
-  private async syncRepayment(
-    transaction: QueuedTransaction
-  ): Promise<boolean> {
-    const { data, error } = await supabase
-      .from('repayments')
-      .insert({
-        user_id: transaction.userId,
-        order_id: transaction.data.orderId,
-        instalment_id: transaction.data.instalmentId,
-        amount: transaction.data.amount,
-        late_fee: transaction.data.lateFee || 0,
-        status: 'pending',
-        due_date: transaction.data.dueDate,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return true;
-  }
-
-  private async syncKYC(transaction: QueuedTransaction): Promise<boolean> {
-    const { data, error } = await supabase
-      .from('kyc_records')
-      .insert({
-        user_id: transaction.userId,
-        type: transaction.data.documentType,
-        file_url: transaction.data.fileUrl,
-        status: 'pending',
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return true;
+  async getPendingCount(): Promise<number> {
+    return offlineQueue.getCount();
   }
 }
 
-export const syncEngine = new SyncEngine();
+export const syncEngine = SyncEngine.getInstance();

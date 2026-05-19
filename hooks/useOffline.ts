@@ -1,9 +1,11 @@
 // hooks/useOffline.ts
+'use client';
+
 import { useEffect, useState, useCallback } from 'react';
-import { toast } from 'sonner';
 import { offlineService } from '@/domains/offline/offlineService';
 import { syncStatusManager } from '@/domains/offline/syncStatus';
 import { useAuth } from './useAuth';
+import { toast } from 'sonner';
 
 export function useOffline() {
   const { user } = useAuth();

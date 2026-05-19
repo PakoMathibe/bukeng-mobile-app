@@ -1,96 +1,90 @@
 // modules/OfflineSync/queue.ts
-import { db } from '@/services/firebase/client';
-import {
-  collection,
-  addDoc,
-  getDocs,
-  deleteDoc,
-  doc,
-  query,
-  where,
-  orderBy,
-  limit,
-  Timestamp,
-} from 'firebase/firestore';
+import { openDB, IDBPDatabase } from 'idb';
 
-export interface QueuedTransaction {
-  id?: string;
+export interface QueuedOperation {
+  id: string;
+  type: 'create' | 'update' | 'delete';
+  endpoint: string;
+  data: Record<string, unknown>;
   userId: string;
-  type: 'payment' | 'repayment' | 'kyc';
-  data: Record<string, any>;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  timestamp: number;
   retryCount: number;
-  createdAt: Date;
-  updatedAt: Date;
+  maxRetries: number;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
 }
 
-const QUEUE_COLLECTION = 'offline_queue';
+class OfflineQueue {
+  private db: IDBPDatabase | null = null;
+  private static instance: OfflineQueue;
+  private readonly DB_NAME = 'bukeng_offline_queue';
+  private readonly DB_VERSION = 1;
 
-export class OfflineQueue {
-  static async add(
-    transaction: Omit<
-      QueuedTransaction,
-      'id' | 'createdAt' | 'updatedAt' | 'retryCount'
-    >
-  ): Promise<string> {
-    const queueItem = {
-      ...transaction,
+  private constructor() {
+    this.init();
+  }
+
+  static getInstance(): OfflineQueue {
+    if (!OfflineQueue.instance) {
+      OfflineQueue.instance = new OfflineQueue();
+    }
+    return OfflineQueue.instance;
+  }
+
+  private async init() {
+    this.db = await openDB(this.DB_NAME, this.DB_VERSION, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains('operations')) {
+          const store = db.createObjectStore('operations', { keyPath: 'id' });
+          store.createIndex('by_status', 'status');
+          store.createIndex('by_timestamp', 'timestamp');
+          store.createIndex('by_user', 'userId');
+        }
+      },
+    });
+  }
+
+  async add(operation: Omit<QueuedOperation, 'id' | 'timestamp' | 'retryCount' | 'status'>): Promise<string> {
+    const id = crypto.randomUUID();
+    const queueItem: QueuedOperation = {
+      ...operation,
+      id,
+      timestamp: Date.now(),
       retryCount: 0,
-      status: 'pending' as const,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      maxRetries: operation.maxRetries || 3,
+      status: 'pending',
     };
 
-    const docRef = await addDoc(collection(db, QUEUE_COLLECTION), {
-      ...queueItem,
-      createdAt: Timestamp.fromDate(queueItem.createdAt),
-      updatedAt: Timestamp.fromDate(queueItem.updatedAt),
-    });
-
-    return docRef.id;
+    await this.db!.add('operations', queueItem);
+    return id;
   }
 
-  static async getAllPending(): Promise<QueuedTransaction[]> {
-    const q = query(
-      collection(db, QUEUE_COLLECTION),
-      where('status', 'in', ['pending', 'processing']),
-      orderBy('createdAt', 'asc'),
-      limit(50)
-    );
-
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate() || new Date(),
-      updatedAt: doc.data().updatedAt?.toDate() || new Date(),
-    })) as QueuedTransaction[];
+  async getAll(): Promise<QueuedOperation[]> {
+    const items = await this.db!.getAll('operations');
+    return items.sort((a, b) => a.timestamp - b.timestamp);
   }
 
-  static async updateStatus(
-    id: string,
-    status: QueuedTransaction['status'],
-    retryCount?: number
-  ): Promise<void> {
-    const docRef = doc(db, QUEUE_COLLECTION, id);
-    await addDoc(collection(db, QUEUE_COLLECTION), {
-      status,
-      ...(retryCount !== undefined && { retryCount }),
-      updatedAt: Timestamp.fromDate(new Date()),
-    });
+  async getPending(): Promise<QueuedOperation[]> {
+    const items = await this.db!.getAllFromIndex('operations', 'by_status', 'pending');
+    return items.sort((a, b) => a.timestamp - b.timestamp);
   }
 
-  static async remove(id: string): Promise<void> {
-    const docRef = doc(db, QUEUE_COLLECTION, id);
-    await deleteDoc(docRef);
+  async updateStatus(id: string, status: QueuedOperation['status'], retryCount?: number): Promise<void> {
+    const item = await this.db!.get('operations', id);
+    if (item) {
+      item.status = status;
+      if (retryCount !== undefined) item.retryCount = retryCount;
+      await this.db!.put('operations', item);
+    }
   }
 
-  static async getPendingCount(): Promise<number> {
-    const q = query(
-      collection(db, QUEUE_COLLECTION),
-      where('status', '==', 'pending')
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.size;
+  async remove(id: string): Promise<void> {
+    await this.db!.delete('operations', id);
+  }
+
+  async getCount(): Promise<number> {
+    const all = await this.db!.getAll('operations');
+    return all.length;
   }
 }
+
+export const offlineQueue = OfflineQueue.getInstance();
