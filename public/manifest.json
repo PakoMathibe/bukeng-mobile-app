@@ -1,23 +1,23 @@
-  {
-    "name": "Bukeng",
-    "short_name": "Bukeng",
-    "description": "Because food can't wait",
-    "start_url": "/",
-    "display": "standalone",
-    "theme_color": "#0d9488",
-    "background_color": "#ffffff",
-    "icons": [
-      {
-        "src": "/logo-192.png",
-        "type": "image/png",
-        "sizes": "192x192",
-        "purpose": "any maskable"
-      },
-      {
-        "src": "/web-app-manifest-512x512.png",
-        "type": "image/png",
-        "sizes": "512x512",
-        "purpose": "any maskable"
-      }
-    ]
-  }
+{
+  "name": "Bukeng",
+  "short_name": "Bukeng",
+  "description": "Because food can't wait",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0d9488",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/logo-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/web-app-manifest-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ]
+}

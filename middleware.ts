@@ -1,4 +1,4 @@
-// middleware.ts - Fixed version with error handling
+// middleware.ts - Fixed version
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
@@ -10,11 +10,26 @@ export async function middleware(request: NextRequest) {
     },
   })
 
+  // Skip middleware for static files and API routes
+  const path = request.nextUrl.pathname
+  const isStaticFile = 
+    path.includes('/_next') || 
+    path.includes('/favicon.ico') || 
+    path === '/manifest.json' ||
+    path.includes('.png') || 
+    path.includes('.ico') || 
+    path.includes('.svg') ||
+    path.includes('/api/')
+  
+  if (isStaticFile) {
+    return response
+  }
+
   // Add safety check for environment variables
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // If env vars are missing, skip auth middleware (for demo/development)
+  // If env vars are missing, skip auth middleware
   if (!supabaseUrl || !supabaseKey) {
     console.warn('⚠️ Supabase credentials missing - skipping auth middleware')
     return response
@@ -50,14 +65,13 @@ export async function middleware(request: NextRequest) {
     const { data: { session } } = await supabase.auth.getSession()
 
     // Auth routes logic
-    const isAuthPage = request.nextUrl.pathname.startsWith('/auth')
-    const isProtectedPage = !isAuthPage && request.nextUrl.pathname !== '/'
-    const isPublicPage = request.nextUrl.pathname === '/'
+    const isAuthPage = path.startsWith('/auth')
+    const isProtectedPage = !isAuthPage && path !== '/'
 
     // If no session and trying to access protected route, redirect to login
     if (!session && isProtectedPage) {
       const redirectUrl = new URL('/auth/login', request.url)
-      redirectUrl.searchParams.set('returnTo', request.nextUrl.pathname)
+      redirectUrl.searchParams.set('returnTo', path)
       return NextResponse.redirect(redirectUrl)
     }
 
@@ -67,7 +81,6 @@ export async function middleware(request: NextRequest) {
     }
   } catch (error) {
     console.error('Middleware auth error:', error)
-    // Don't block the request if auth fails - just continue
     return response
   }
 
@@ -76,6 +89,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

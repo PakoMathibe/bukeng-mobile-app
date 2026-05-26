@@ -1,9 +1,7 @@
-// app/page.tsx
 'use client';
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import {
   ShoppingBag,
   Clock,
@@ -27,12 +25,14 @@ export default function HomePage() {
       <div className="relative px-5 pt-12 pb-8">
         <div className="text-center">
           <div className="flex justify-center mb-4">
-            <Image
+            {/* Changed from Next.js Image to regular img */}
+            <img
               src="/logo-icon.png"
               alt="Bukeng"
               width={60}
               height={60}
               className="w-15 h-15"
+              suppressHydrationWarning
             />
           </div>
           <h1 className="text-5xl font-bold mb-3 bg-gradient-to-r from-teal-600 to-teal-800 bg-clip-text text-transparent">
@@ -131,12 +131,14 @@ export default function HomePage() {
       <div className="px-5 py-8">
         <div className="bg-gradient-to-r from-teal-600 to-teal-700 rounded-2xl p-6 text-center">
           <div className="flex justify-center mb-3">
-            <Image
+            {/* Changed from Next.js Image to regular img */}
+            <img
               src="/logo-icon-white.png"
               alt="Bukeng"
               width={40}
               height={40}
               className="w-10 h-10"
+              suppressHydrationWarning
             />
           </div>
           <h2 className="text-xl font-bold text-white mb-2">
